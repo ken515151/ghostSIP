@@ -168,6 +168,19 @@ class PjsipTests(TestCase):
         text = pjsip.render(Configuration.load(), [])
         self.assertNotIn("voipstudio-reg", text)
 
+    def test_from_domain_carries_the_sip_port(self):
+        # The callback URI phones store must include the non-standard port,
+        # else tap-to-callback dials 5060 (live finding).
+        with patch.dict("os.environ", {"GHOSTSIP_DOMAIN": "ghostsip.example.com"}):
+            text = pjsip.render(Configuration.load(), [])
+        self.assertIn("from_domain=ghostsip.example.com:5560", text)
+        with patch.dict("os.environ", {}, clear=False):
+            import os as _os
+            env = {k: v for k, v in _os.environ.items() if k != "GHOSTSIP_DOMAIN"}
+            with patch.dict("os.environ", env, clear=True):
+                text = pjsip.render(Configuration.load(), [])
+        self.assertNotIn("from_domain=", text)
+
 
 class ValidationTests(TestCase):
     def test_configuration_rules(self):

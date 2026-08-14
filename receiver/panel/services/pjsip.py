@@ -32,7 +32,7 @@ direct_media=no
 rtp_symmetric=yes
 force_rport=yes
 rewrite_contact=yes
-
+{from_domain_line}
 [vvx-auth](!)
 type=auth
 auth_type=userpass
@@ -103,7 +103,15 @@ match={server}
 
 
 def render(config, handsets) -> str:
-    parts = [_HEADER.format(port=int(config.sip_port))]
+    port = int(config.sip_port)
+    # Ghost INVITEs carry this as the From domain, so the URI a phone stores
+    # in its missed-call entry is sip:<number>@<domain>:<port>. Without the
+    # explicit port, a tap-to-callback that honours the URI would aim at SIP
+    # default 5060 — where nothing listens (found live: callbacks died
+    # silently). With it, callbacks land on the real listener.
+    domain = os.environ.get("GHOSTSIP_DOMAIN", "")
+    from_domain_line = f"from_domain={domain}:{port}\n" if domain else ""
+    parts = [_HEADER.format(port=port, from_domain_line=from_domain_line)]
     for hs in handsets:
         parts.append(_HANDSET_TPL.format(name=hs.name or hs.endpoint, ep=hs.endpoint, pw=hs.sip_password))
     if config.trunk_username:
