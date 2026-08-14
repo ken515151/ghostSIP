@@ -18,12 +18,12 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      GHOSTSIP_CONFIG: /etc/ghostsip/config.json
+      GHOSTSIP_DB: /etc/ghostsip/db.sqlite3
       GHOSTSIP_PJSIP_PATH: /etc/ghostsip/pjsip.conf
       # Same container as Asterisk, so no sudo needed.
       GHOSTSIP_ASTERISK_RELOAD_CMD: asterisk -rx 'pjsip reload'
     volumes:
-      # config.json + generated pjsip.conf — THE state to back up
+      # SQLite DB + generated pjsip.conf + secret key — THE state to back up
       - ./data/ghostsip:/etc/ghostsip
       # messages/security logs surfaced for host fail2ban
       - ./data/asterisk-logs:/var/log/asterisk

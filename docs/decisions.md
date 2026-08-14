@@ -98,32 +98,75 @@ test A shrinks to verifying the abandoned-call specifics — see
 
 ## Alerting — Pushover
 
-- **Default:** off until keys are entered in the panel (Settings → Pushover
+- **Default:** off until keys are entered (admin → Configuration → Pushover
   alerts). Once enabled, a **high-priority** push fires when ≥5 failed SIP
-  auth/registration attempts land within 10 minutes (the receiver tails
+  auth/registration attempts land within 10 minutes (the watcher tails
   Asterisk's security log — same container, so it's just a file). At most
   one brute-force alert per hour. A **normal-priority** push also fires when
   an endpoint successfully authenticates from an address it has never used
-  before (on by default; known addresses persist in alert-state.json) —
-  deliberately NOT on every registration, since phones re-REGISTER every few
-  minutes and that would be pure spam; the new-address event is the one that
-  means "credential in use from somewhere new". Optional third toggle:
-  normal-priority push when the receiver logs an ERROR, max one per
-  15 minutes.
+  before (on by default; known addresses persist in the database, visible
+  in admin) — deliberately NOT on every registration, since phones
+  re-REGISTER every few minutes and that would be pure spam; the new-address
+  event is the one that means "credential in use from somewhere new".
+  Optional third toggle: normal-priority push when an ERROR is recorded,
+  max one per 15 minutes. Delivery is via Apprise.
 - **Why:** with SIP open to the internet and no source-IP allowlist, the
   brute-force tripwire is the "someone is guessing passwords" signal;
   fail2ban does the banning, Pushover does the telling-Ken.
 - **Change it:** thresholds/cooldowns are constants at the top of
-  receiver/alerts.py.
+  receiver/panel/services/alerts.py.
+
+## Receiver rewritten on Django (decided 14 Aug 2026)
+
+- **Decision (Ken's):** "no more hand-rolled iffyness" — the app must stand
+  on proven, maintained foundations, because it will be looked at roughly
+  once a year. The FastAPI receiver with its hand-assembled auth, CSRF
+  trick, JSON-config round-trip, hand-written panel UI, Pushover client and
+  in-memory log buffer was replaced wholesale.
+- **What it became:** Django 5.2 LTS (security-supported to 2028) +
+  django.contrib.admin (the whole UI, generated from models) +
+  django.contrib.auth (hashed passwords, sessions) + django-axes (login
+  lockout) + Django's CSRF middleware + SQLite/ORM/migrations + Apprise
+  (Pushover delivery) + gunicorn/whitenoise. Events, known device
+  addresses and the injection dedup guard now persist in the database —
+  the dedup is thereby also correct across gunicorn workers, which the old
+  in-memory dict was not.
+- **What survived unchanged:** the ~250-line domain core (webhook filter on
+  the QT-proven payload semantics, ghost originate, pjsip render, security
+  log watcher, lockdown), the container/Caddy/Asterisk architecture, and
+  every behaviour decision in this file. All prior test scenarios were
+  ported to Django TestCase (21 tests) and the full stack was re-verified
+  live in Docker — including a fake SIP phone registering and receiving a
+  ghost INVITE whose CANCEL carried `Q.850;cause=0`, i.e. **no
+  SIP;cause=200** (pre-validating test B's wire-side condition).
+
+## Admin panel is NOT internet-facing (decided 14 Aug 2026)
+
+- **Decision (Ken's, from hard experience):** no home-grown login system
+  gets exposed to the internet — Query Tracker went down that road once and
+  hardening it after the fact took ages. The public domain serves ONLY
+  `/webhook` (+ bare `/healthz`); every other path 404s at Caddy.
+- **How the panel is reached instead:** SSH tunnel only
+  (`ssh -L 8100:127.0.0.1:8100`, then http://127.0.0.1:8100/admin) — the
+  security boundary is OpenSSH with key auth, about the most proven login
+  system in existence. No VPN and no desktop environment on the VPS (both
+  considered and rejected: Tailscale unwanted, xrdp adds RAM + attack
+  surface for the same outcome). Phones are unaffected (they speak SIP,
+  not HTTP).
+- **Django's session login, CSRF middleware and django-axes lockout stay**
+  as defence-in-depth behind the tunnel, but they are not the front line
+  and must never become one: any future route that would publish /admin
+  (or any new UI) to the public internet is wrong by default.
 
 ## Encryption status — what is enforced vs what is not (audited 14 Aug 2026)
 
 Enforced, not merely preferred:
 
-- **HTTPS for webhook + admin:** Caddy redirects HTTP→HTTPS automatically
-  and only serves the site over TLS (1.2+); the receiver itself listens on
-  loopback only, so there is no plaintext path from outside. Webhook and
-  admin Basic Auth credentials therefore only ever cross the wire encrypted.
+- **HTTPS for the webhook:** Caddy redirects HTTP→HTTPS automatically and
+  only serves over TLS (1.2+); the app itself listens on loopback only, so
+  there is no plaintext path from outside. Webhook credentials only ever
+  cross the wire encrypted. The admin crosses the network solely inside the
+  SSH tunnel's encryption.
 - **Pushover:** HTTPS API.
 - **ARI and the receiver:** plaintext HTTP but bound to 127.0.0.1 inside
   the container/host — never reachable externally (and never exposed in
@@ -150,8 +193,8 @@ NOT encrypted — known, accepted for now:
 - **What it is:** a panel-controlled kill switch for the outbound callback
   relay — the only path on this box that can cost money. Enforced by an
   Asterisk global (`GHOSTSIP_LOCKDOWN`) the dialplan checks per call, set
-  via ARI: instant, no reload, survives restarts (state in config.json,
-  re-asserted at startup). Ghost-call injection and the phones' normal
+  via ARI: instant, no reload, survives restarts (state in the database,
+  re-asserted at startup by the watcher). Ghost-call injection and the phones' normal
   VoIPstudio line are untouched — only tap-to-callback pauses, so a false
   positive costs convenience, not operations.
 - **Triggers:** manual button; or automatic on a credential successfully
@@ -163,8 +206,8 @@ NOT encrypted — known, accepted for now:
 - **Suspend (1 h):** the panel's suspend button disarms the automatic
   trigger for an hour for planned new-device/new-office setup. New-address
   alerts still send; manual lockdown still works; re-arms itself.
-- **Change it:** suspend duration is `SUSPEND_SECONDS` in
-  receiver/lockdown.py.
+- **Change it:** suspend duration is `SUSPEND` in
+  receiver/panel/services/lockdown.py.
 
 ## Reload mechanism for Asterisk
 

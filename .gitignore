@@ -13,5 +13,9 @@ config.json
 # Docker runtime state (config volume, TLS certs, asterisk logs)
 data/
 
+# Django local artifacts
+*.sqlite3
+receiver/staticfiles/
+
 # Captures
 *.pcap

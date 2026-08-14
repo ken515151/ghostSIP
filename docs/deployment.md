@@ -118,11 +118,46 @@ docker compose logs -f     # watch first startup; Ctrl-C to stop watching
 
 First build takes a few minutes. Then verify from your own machine:
 
-- `https://YOUR_DOMAIN/healthz` → `{"ok": true, ...}` with a valid
-  certificate (Caddy fetched it automatically — if this hangs, your DNS
-  record isn't resolving to the VPS yet).
-- `https://YOUR_DOMAIN/admin` → log in with `admin` + your
-  `GHOSTSIP_ADMIN_PASSWORD`.
+- `https://YOUR_DOMAIN/healthz` → `{"ok": true}` with a valid certificate
+  (Caddy fetched it automatically — if this hangs, your DNS record isn't
+  resolving to the VPS yet).
+- `https://YOUR_DOMAIN/admin` → **404**. Correct: the public domain serves
+  only the webhook; the admin panel is deliberately not on the internet.
+
+## 5b. Admin access — SSH tunnel only
+
+The admin never faces the internet: it stays bound to loopback on the VPS,
+and you reach it by port-forwarding over SSH — the security boundary is
+OpenSSH itself, not any login page of ours.
+
+From your Windows machine (OpenSSH is built in):
+
+```powershell
+ssh -L 8100:127.0.0.1:8100 root@YOUR_VPS_IP
+```
+
+Leave that window open and browse to **http://127.0.0.1:8100/admin** in your
+normal browser. Log in with `admin` + your `GHOSTSIP_ADMIN_PASSWORD`.
+
+Make it a one-double-click affair: save those contents as
+`ghostsip-admin.cmd` on your desktop —
+
+```bat
+start http://127.0.0.1:8100/admin
+ssh -L 8100:127.0.0.1:8100 root@YOUR_VPS_IP
+```
+
+Recommended while you're here — key-only SSH:
+
+```bash
+# on your PC (once):        ssh-keygen -t ed25519
+# copy the public key over: type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@VPS "cat >> ~/.ssh/authorized_keys"
+# then on the VPS, in /etc/ssh/sshd_config: PasswordAuthentication no
+systemctl restart ssh
+```
+
+Django's session login, CSRF protection and django-axes lockout all remain
+as defence-in-depth behind the tunnel, but nothing of ours is exposed.
 
 ## 6. fail2ban (host-side, watching Asterisk's logs)
 
@@ -152,27 +187,32 @@ generated, and you set provider-side barring on the seat in step 0. (See
 docs/decisions.md — no phone site has a static IP, so there's no source-IP
 allowlist; this layered posture is the design.)
 
-## 7. Configure everything in the admin panel
+## 7. Configure everything in the admin
 
-Open `https://YOUR_DOMAIN/admin`:
+Open `http://127.0.0.1:8100/admin` through the SSH tunnel (step 5b) and log
+in. It's a standard Django admin — two things to set up:
 
-1. **Settings → Webhook**: click *Generate* for username/password. These
-   become part of the VoIPstudio webhook URL in step 9.
-2. **Settings → Trunk-back seat**: the SIP username/password/registrar of
-   the dedicated VoIPstudio seat.
-3. **Settings → Ghost-call behaviour**: defaults are fine to start. Set
-   **Caller name prefix** to the ring-group name VoIPstudio prepends on real
-   calls so ghost entries match.
-4. **Settings → Pushover alerts** (recommended): user key + an API token
-   from [pushover.net](https://pushover.net), tick Enabled. Repeated failed
-   SIP registrations then send a **high-priority** push — the brute-force
-   tripwire (no IP allowlist exists, so this is how you'd find out).
-   Optionally tick app-error alerts too. Save, then *Send test alert*.
-5. **Handsets**: one row per VVX — pick an endpoint name (e.g. `phone1`),
-   click *Gen* for its SIP password.
-6. **Save configuration** → then **Reload Asterisk**.
-7. Check the **pjsip.conf** tab shows your handsets and the trunk
-   registration, and the **Logs** tab is clean.
+1. **GhostSIP → Configuration** (one page, opens directly):
+   - **Webhook**: pick a username; a password is pre-generated. These become
+     part of the VoIPstudio webhook URL in step 9.
+   - **Ghost-call behaviour**: defaults are fine. Set **Caller name prefix**
+     to the ring-group name VoIPstudio prepends on real calls so ghost
+     entries match.
+   - **Trunk-back seat**: the SIP username/password/registrar of the
+     dedicated VoIPstudio seat.
+   - **Pushover alerts** (recommended): user key + an API token from
+     [pushover.net](https://pushover.net), tick Enabled. Repeated failed SIP
+     registrations then send a **high-priority** push — the brute-force
+     tripwire. Optionally tick the new-address and app-error alerts.
+   - **Save.** The top-right buttons handle the rest: **Reload Asterisk**
+     applies config changes; **Engage lockdown** / **Suspend auto-lockdown
+     1 h** control the callback kill-switch.
+2. **GhostSIP → Handsets → Add handset**: name + endpoint (e.g. `phone1`);
+   the SIP password is auto-generated — copy it for the phone. Save, then
+   **Reload Asterisk** from the Configuration page.
+
+**GhostSIP → Events** is the activity log (webhooks, injections, security,
+lockdown) — filterable, searchable, and it survives restarts.
 
 Confirm the trunk registered:
 
@@ -230,14 +270,14 @@ docker compose exec ghostsip asterisk -rvvv    # 'exit' leaves it running
 | Update GhostSIP | `cd /opt/ghostsip && git pull && docker compose up -d --build` |
 | Update Caddy | `docker compose pull caddy && docker compose up -d` |
 | OS security updates | `apt update && apt upgrade -y` (or enable `unattended-upgrades`) |
-| Back up | Everything that matters is `/opt/ghostsip/data/ghostsip/` (config.json + generated pjsip.conf) plus your `.env`. Provider snapshots cover the rest. |
+| Back up | Everything that matters is `/opt/ghostsip/data/ghostsip/` (SQLite DB, generated pjsip.conf, Django secret key) plus your `.env`. Provider snapshots cover the rest. |
 | Rebuild from nothing | New VPS → steps 1–6 → restore `.env` and `data/ghostsip/` → `docker compose up -d --build` → phones re-register on their own. |
 
 ## Fault-finding
 
-1. **Admin panel Logs tab** — every webhook event, injection result and
-   error, with the header dot red on any error. First stop for "no missed
-   call appeared".
+1. **Admin → Events** — every webhook event, injection result and error,
+   persisted and filterable by level/kind. First stop for "no missed call
+   appeared".
 2. `docker compose logs ghostsip` — the same plus Asterisk's console output
    and startup errors (e.g. bad `.env`, the entrypoint says exactly which
    variable is missing).

@@ -1,7 +1,14 @@
-# GhostSIP — TLS termination. Caddy fetches and renews the Let's Encrypt
-# certificate automatically for the domain set in .env, and proxies to the
-# receiver on loopback. Ports 80+443 must be open in ufw (80 is needed for
-# the ACME challenge and redirects to https).
+# GhostSIP — public TLS front. Serves ONLY what the internet needs:
+# the VoIPstudio webhook and a bare liveness check. The admin is NOT
+# published here — it is reached over an SSH tunnel to loopback
+# (ssh -L 8100:127.0.0.1:8100, see docs/deployment.md), so no login UI of
+# ours faces the internet. Any other path on the public domain is a 404.
 {$GHOSTSIP_DOMAIN} {
-    reverse_proxy 127.0.0.1:8100
+    @public path /webhook /healthz
+    handle @public {
+        reverse_proxy 127.0.0.1:8100
+    }
+    handle {
+        respond 404
+    }
 }
