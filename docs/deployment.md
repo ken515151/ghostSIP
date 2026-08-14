@@ -437,6 +437,7 @@ docker compose exec ghostsip asterisk -rvvv    # 'exit' leaves it running
 | Change the admin password | edit `.env`, then `docker compose restart ghostsip` (the container re-applies it) |
 | Rotate the trunk seat password | change it in the VoIPstudio dashboard, paste into Configuration, Save, Reload Asterisk |
 | Lockdown | Configuration page top-right: **Engage/Lift lockdown**, **Suspend auto-lockdown 1 h** (for planned new-phone setup) |
+| Settings safety net | Configuration page top-right: **Export settings** downloads all hand-entered config + handsets (incl. secrets — store like a password); **Import settings** faithfully restores such a file. Export before fiddling. |
 
 ## Backup and restore
 

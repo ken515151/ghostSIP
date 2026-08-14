@@ -7,6 +7,12 @@
     <a href="{% url 'admin:panel_status' %}" class="button">System status</a>
   </li>
   <li>
+    <a href="{% url 'admin:panel_export_settings' %}" class="button">Export settings</a>
+  </li>
+  <li>
+    <a href="{% url 'admin:panel_import_settings' %}" class="button">Import settings</a>
+  </li>
+  <li>
     {% if original.lockdown_active %}
       <form method="post" action="{% url 'admin:panel_lockdown_lift' %}" style="display:inline">
         {% csrf_token %}<button type="submit" class="button">Lift lockdown</button>

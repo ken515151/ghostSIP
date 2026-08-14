@@ -1,0 +1,35 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label='panel' %}">GhostSIP</a>
+  &rsaquo; Import settings
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>Import settings</h1>
+
+<div class="module" style="padding: 14px 16px; max-width: 70ch">
+  <p>Restores a settings file made by <b>Export settings</b>. This is a
+  faithful restore:</p>
+  <ul>
+    <li>All Configuration values are <b>overwritten</b> by the file.</li>
+    <li>The handset list is made to <b>match the file exactly</b> —
+        handsets not present in the file are removed.</li>
+    <li>Everything is validated first; if anything in the file is invalid,
+        <b>nothing</b> is changed.</li>
+  </ul>
+  <p>Afterwards, press <b>Reload Asterisk</b> on the Configuration page to
+  apply the regenerated telephony config.</p>
+  <p style="color: #ba2121"><b>Settings files contain the SIP, webhook and
+  trunk passwords in plaintext.</b> Store them like passwords.</p>
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <p><input type="file" name="file" accept=".json,application/json" required></p>
+    <p><input type="submit" class="default" value="Import and replace settings"></p>
+  </form>
+</div>
+{% endblock %}

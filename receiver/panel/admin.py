@@ -1,18 +1,21 @@
 """GhostSIP admin. Nearly everything here is django.contrib.admin doing the
-work; the custom parts are the pjsip regeneration hook on save and four
-buttons (lockdown engage/lift, suspend-1h, reload Asterisk) added to the
-Configuration page via get_urls + a small template override."""
+work; the custom parts are the pjsip regeneration hook on save and the
+Configuration page's extra buttons (lockdown, reload, test push, status,
+settings export/import) added via get_urls + a small template override."""
 
 from __future__ import annotations
 
+import json
+
 from django.contrib import admin, messages
-from django.http import HttpResponseRedirect
+from django.core.exceptions import ValidationError
+from django.http import HttpResponse, HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils import timezone
 
 from panel.models import Configuration, Event, Handset, KnownAddress
-from panel.services import alerts, ari, lockdown, pjsip
+from panel.services import alerts, ari, lockdown, pjsip, settings_io
 from panel.services import status as status_svc
 
 
@@ -84,6 +87,10 @@ class ConfigurationAdmin(admin.ModelAdmin):
             path("reload-asterisk/", wrap(self.reload_view), name="panel_reload_asterisk"),
             path("test-pushover/", wrap(self.test_pushover_view), name="panel_test_pushover"),
             path("status/", wrap(self.status_view), name="panel_status"),
+            path("export-settings/", wrap(self.export_settings_view),
+                 name="panel_export_settings"),
+            path("import-settings/", wrap(self.import_settings_view),
+                 name="panel_import_settings"),
         ]
         return extra + super().get_urls()
 
@@ -126,6 +133,47 @@ class ConfigurationAdmin(admin.ModelAdmin):
             "public": status_svc.public_check(),
         }
         return TemplateResponse(request, "admin/panel/status.html", context)
+
+    def export_settings_view(self, request):
+        data = settings_io.export_settings()
+        Event.log(Event.INFO, "system", "Settings exported from admin")
+        response = HttpResponse(
+            json.dumps(data, indent=2), content_type="application/json"
+        )
+        stamp = timezone.localtime().strftime("%Y-%m-%d")
+        response["Content-Disposition"] = (
+            f'attachment; filename="ghostsip-settings-{stamp}.json"'
+        )
+        return response
+
+    def import_settings_view(self, request):
+        if request.method == "POST":
+            upload = request.FILES.get("file")
+            if not upload:
+                messages.error(request, "No file was uploaded.")
+            elif upload.size > 1_000_000:
+                messages.error(request, "That file is too large to be a settings file.")
+            else:
+                try:
+                    data = json.loads(upload.read().decode("utf-8"))
+                    summary = settings_io.import_settings(data)
+                except (ValueError, UnicodeDecodeError):
+                    messages.error(request, "That file is not valid JSON.")
+                except ValidationError as exc:
+                    messages.error(request, " ".join(exc.messages))
+                else:
+                    Event.log(Event.INFO, "system", f"Settings imported: {summary}")
+                    _regenerate_pjsip(request)
+                    messages.success(
+                        request, f"{summary} Press “Reload Asterisk” to apply."
+                    )
+                    return self._back()
+        context = {
+            **self.admin_site.each_context(request),
+            "title": "Import settings",
+            "opts": self.model._meta,
+        }
+        return TemplateResponse(request, "admin/panel/import_settings.html", context)
 
     def test_pushover_view(self, request):
         if request.method == "POST":

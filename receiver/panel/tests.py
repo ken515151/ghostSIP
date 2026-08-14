@@ -304,6 +304,103 @@ class StatusPageTests(TestCase):
         self.assertEqual(r.status_code, 302)  # bounced to the login page
 
 
+class SettingsExportImportTests(TestCase):
+    def _populate(self):
+        config = Configuration.load()
+        config.webhook_username = "vs"
+        config.webhook_password = "whsecret"
+        config.trunk_username = "trunk1"
+        config.trunk_password = "tpass"
+        config.caller_name_prefix = "TechRescue |"
+        config.save()
+        Handset.objects.create(name="Front desk", endpoint="phone1", sip_password="s1")
+        Handset.objects.create(name="Bench", endpoint="phone2", sip_password="s2")
+
+    def test_roundtrip_restores_everything(self):
+        from panel.services import settings_io
+
+        self._populate()
+        data = settings_io.export_settings()
+        self.assertEqual(data["ghostsip_settings_version"], 1)
+        self.assertEqual(data["configuration"]["trunk_password"], "tpass")
+        self.assertEqual(len(data["handsets"]), 2)
+
+        # wreck the state, then restore
+        config = Configuration.load()
+        config.webhook_username = "changed"
+        config.caller_name_prefix = ""
+        config.save()
+        Handset.objects.all().delete()
+        Handset.objects.create(name="Rogue", endpoint="rogue9", sip_password="x")
+
+        summary = settings_io.import_settings(data)
+        self.assertIn("2 handset(s)", summary)
+        config = Configuration.load()
+        self.assertEqual(config.webhook_username, "vs")
+        self.assertEqual(config.caller_name_prefix, "TechRescue |")
+        self.assertEqual(
+            set(Handset.objects.values_list("endpoint", flat=True)), {"phone1", "phone2"}
+        )  # rogue9 removed — faithful restore
+
+    def test_invalid_file_changes_nothing(self):
+        from panel.services import settings_io
+
+        self._populate()
+        data = settings_io.export_settings()
+        data["configuration"]["sip_port"] = 8088  # invalid: clashes internally
+        with self.assertRaises(Exception):
+            settings_io.import_settings(data)
+        self.assertEqual(Configuration.load().sip_port, 5560)  # untouched
+        self.assertEqual(Handset.objects.count(), 2)
+
+        with self.assertRaises(Exception):
+            settings_io.import_settings({"ghostsip_settings_version": 99})
+        with self.assertRaises(Exception):
+            settings_io.import_settings("not a dict")
+
+    def test_duplicate_endpoints_rejected(self):
+        from panel.services import settings_io
+
+        data = settings_io.export_settings()
+        data["handsets"] = [
+            {"name": "a", "endpoint": "dup1", "sip_password": "p"},
+            {"name": "b", "endpoint": "dup1", "sip_password": "q"},
+        ]
+        with self.assertRaises(Exception):
+            settings_io.import_settings(data)
+
+    def test_admin_views(self):
+        from django.contrib.auth import get_user_model
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self._populate()
+        User = get_user_model()
+        self.client.force_login(User.objects.create_superuser("admin", password="x" * 16))
+
+        r = self.client.get("/admin/panel/configuration/export-settings/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("attachment", r["Content-Disposition"])
+        exported = json.loads(r.content)
+        self.assertEqual(exported["configuration"]["webhook_username"], "vs")
+
+        r = self.client.get("/admin/panel/configuration/import-settings/")
+        self.assertContains(r, "Import settings")
+
+        Handset.objects.all().delete()
+        upload = SimpleUploadedFile(
+            "settings.json", json.dumps(exported).encode(), content_type="application/json"
+        )
+        r = self.client.post(
+            "/admin/panel/configuration/import-settings/", {"file": upload}, follow=True
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(Handset.objects.count(), 2)
+
+        bad = SimpleUploadedFile("bad.json", b"not json", content_type="application/json")
+        r = self.client.post("/admin/panel/configuration/import-settings/", {"file": bad})
+        self.assertContains(r, "not valid JSON")
+
+
 class DedupHousekeepingTests(TestCase):
     def test_old_rows_pruned(self):
         from panel.management.commands.watch_security_log import Command
