@@ -1,41 +1,118 @@
-# GhostSIP — deployment guide (Docker on a VPS)
+# GhostSIP — Install Guide
 
-The whole system runs as a Docker Compose stack on one small VPS: a
-`ghostsip` container (Asterisk + the receiver/admin panel together) and a
-`caddy` container (automatic HTTPS). Follow this top to bottom on a fresh
-server; nothing here assumes prior Docker knowledge.
+Complete instructions for taking GhostSIP from nothing to a working system.
+Follow it top to bottom on a fresh server; nothing assumes prior Docker or
+Linux knowledge beyond copy-pasting commands. Each stage ends with a check —
+don't move on until the check passes.
 
-The old bare-metal (apt + systemd) instructions were removed when the Docker
-shape was settled — they're in git history if ever wanted.
+**The shape of what you're building:** one small VPS runs a Docker Compose
+stack — a `ghostsip` container (Asterisk + the Django admin/webhook app
+together) and a `caddy` container (automatic HTTPS). The public internet can
+reach exactly three things: SIP on port 5560, the VoIPstudio webhook, and a
+bare health check. The admin is reached only through an SSH tunnel.
+
+**Install checklist:**
+
+- [ ] 0 — Accounts and prerequisites gathered
+- [ ] 1 — VPS created, first login, OS updated
+- [ ] 2 — SSH keys set up, password login disabled
+- [ ] 3 — Docker installed
+- [ ] 4 — GhostSIP cloned, `.env` written
+- [ ] 5 — Firewall configured
+- [ ] 6 — Stack built and started; public URL and admin tunnel verified
+- [ ] 7 — fail2ban watching Asterisk
+- [ ] 8 — Everything configured in the admin
+- [ ] 9 — Phones configured and registered
+- [ ] 10 — VoIPstudio webhook created
+- [ ] 11 — Acceptance tests (A/B/C) run
 
 ---
 
 ## 0. What you need before starting
 
-- **VPS**: Ubuntu 24.04 LTS, 2 GB RAM, 1–2 vCPU, 20 GB disk, **dedicated
-  IPv4**, London region. (~£5/mo — DigitalOcean, Vultr, Linode, Mythic
-  Beasts all fine.) Turn on the provider's snapshot/backup add-on.
-- **A DNS name**: create an `A` record, e.g. `ghostsip.yourdomain.co.uk` →
-  the VPS IP. Caddy needs it resolving before first start to fetch the TLS
-  certificate.
-- **VoIPstudio trunk-back seat**: a dedicated seat whose SIP
-  username/password/registrar you can see in the dashboard. While there, set
-  **international call barring** on that seat — it's one of the anti-fraud
-  layers (§6).
+Gather these first; every later stage assumes them.
 
-## 1. First login and basics
+1. **A VPS account** — DigitalOcean, Vultr, Linode/Akamai, Mythic Beasts or
+   similar. Spec when creating the server:
+   - **Ubuntu 24.04 LTS** (the OS this guide and the stack are tested on)
+   - **2 GB RAM, 1–2 vCPU, 20 GB disk** (~£5–6/mo tier)
+   - **London region** (callback audio relays through this box; keep the
+     round-trip short)
+   - **A dedicated IPv4 address** (standard on the providers above — avoid
+     any "IPv6-only" or "NAT VPS" budget tier)
+   - Turn on the provider's **automated snapshot/backup** add-on (~£1/mo).
+2. **A DNS name for the webhook** — create an `A` record at your DNS host,
+   e.g. `ghostsip.yourdomain.co.uk` → the VPS IP, once you know the IP
+   (stage 1). Caddy can't fetch its TLS certificate until this resolves.
+3. **A dedicated VoIPstudio "trunk-back" seat** — an ordinary extra user/seat
+   on the VoIPstudio account whose **SIP username, password and registrar**
+   you can read in the dashboard (the same details you used to configure the
+   VVXes manually). While in the dashboard, set **international call
+   barring** on that seat — it's one of the anti-fraud layers.
+4. **A Pushover account** (optional but recommended, ~one-off $5 mobile
+   licence) — note your **User Key**, and create an *Application* called
+   GhostSIP to get an **API Token**.
+5. **Access to the GhostSIP repo** — it's private
+   (`github.com/ken515151/ghostSIP`), so create a GitHub **fine-grained
+   personal access token** with read-only access to just this repo
+   (GitHub → Settings → Developer settings → Fine-grained tokens) for the
+   clone in stage 4. Alternatively make the repo public, or `scp` the folder
+   up instead.
 
-SSH in as root (or the user your provider created):
+## 1. Create the VPS and log in
 
-```bash
+Create the server per the spec above, note its IP, and create the DNS record
+now so it has time to propagate.
+
+From your Windows machine (PowerShell — OpenSSH is built into Windows 10/11):
+
+```powershell
 ssh root@YOUR_VPS_IP
-apt update && apt upgrade -y
-timedatectl set-timezone Europe/London
 ```
 
-## 2. Install Docker
+Accept the host-key prompt, log in with the password/key the provider gave
+you, then bring the OS current:
 
-Docker's official repository (the Ubuntu-packaged docker is older):
+```bash
+apt update && apt upgrade -y
+timedatectl set-timezone Europe/London
+reboot
+```
+
+**Check:** after a minute, `ssh root@YOUR_VPS_IP` works again and
+`date` shows UK time.
+
+## 2. SSH keys (do this before anything else)
+
+The SSH login is GhostSIP's real security boundary — the admin panel sits
+behind it — so make it key-only now.
+
+On your Windows PC (PowerShell):
+
+```powershell
+ssh-keygen -t ed25519        # accept defaults; a passphrase is sensible
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@YOUR_VPS_IP "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+```
+
+Confirm key login works — **in a new window, before locking the door**:
+
+```powershell
+ssh root@YOUR_VPS_IP         # should log in with NO password prompt
+```
+
+Only once that works, disable password login on the VPS:
+
+```bash
+sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+systemctl restart ssh
+```
+
+**Check:** `ssh root@YOUR_VPS_IP` still works from your PC; from anywhere
+without your key it's refused.
+
+## 3. Install Docker
+
+Docker's official repository (Ubuntu's own packaging is older):
 
 ```bash
 apt install -y ca-certificates curl
@@ -47,123 +124,120 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
   > /etc/apt/sources.list.d/docker.list
 apt update
 apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-docker --version    # sanity check
 ```
 
-## 3. Get GhostSIP and configure the bootstrap secrets
+**Check:** `docker --version` and `docker compose version` both print
+versions.
 
-First push this repo to GitHub if it isn't there yet (it currently has no
-remote), then on the VPS:
+## 4. Get GhostSIP and write the bootstrap secrets
 
 ```bash
 apt install -y git
-git clone https://github.com/YOUR_GITHUB_USER/ghostSIP.git /opt/ghostsip
+git clone https://YOUR_GITHUB_USER:YOUR_TOKEN@github.com/ken515151/ghostSIP.git /opt/ghostsip
 cd /opt/ghostsip
 cp deploy/.env.example .env
 ```
 
-(If you'd rather not push to GitHub, `scp -r` the repo folder to
-`/opt/ghostsip` instead — but the git route makes the update procedure in
-Day-2 operations a one-liner.)
+(The token in the URL is the fine-grained PAT from stage 0.5. Git stores the
+remote URL with the token in `/opt/ghostsip/.git/config` — root-only on this
+box, and the token is read-only to one repo, so acceptable; revoke it on
+GitHub any time.)
 
-Generate the two passwords and put them in `.env`:
+Generate two strong values and edit the file:
 
 ```bash
-openssl rand -base64 24    # run twice — once per password
+openssl rand -base64 24      # run twice — once per password below
 nano .env
 ```
 
-Set in `.env`:
+Fill in:
 
-- `GHOSTSIP_DOMAIN` — your DNS name from step 0
-- `GHOSTSIP_ADMIN_PASSWORD` — first generated value (the /admin login)
-- `GHOSTSIP_ARI_PASSWORD` — second generated value (internal
-  Asterisk↔receiver secret; you never type it anywhere else)
+| Variable | Value |
+|---|---|
+| `GHOSTSIP_DOMAIN` | your DNS name, e.g. `ghostsip.yourdomain.co.uk` |
+| `GHOSTSIP_ADMIN_PASSWORD` | first generated value — the admin login |
+| `GHOSTSIP_ARI_PASSWORD` | second generated value — internal Asterisk↔app secret; never typed anywhere else |
 
-Then keep it root-only:
+Save (Ctrl-O, Enter, Ctrl-X), then:
 
 ```bash
 chmod 600 .env
 ```
 
-These are the **only** hand-edited settings. Everything else is done in the
-web admin panel.
+These are the **only** hand-edited settings in the whole system. Everything
+else is configured in the admin.
 
-## 4. Firewall — before starting the stack
+**Check:** `cat .env` shows all three values filled in, no placeholders left.
+
+## 5. Firewall
 
 ```bash
 ufw allow OpenSSH
-ufw allow 80/tcp            # ACME certificate challenge + redirect
-ufw allow 443/tcp           # webhook + admin panel
+ufw allow 80/tcp            # ACME certificate challenge + HTTPS redirect
+ufw allow 443/tcp           # the webhook
 ufw allow 5560/udp          # SIP — non-standard on purpose; must match the
-                            # panel's "SIP port" setting (default 5560)
-ufw allow 10000:20000/udp   # RTP (matches asterisk/rtp.conf)
+                            # admin's "SIP port" setting (default 5560)
+ufw allow 10000:20000/udp   # RTP audio (matches asterisk/rtp.conf)
 ufw default deny incoming
-ufw enable
+ufw enable                  # answer y
 ```
 
-The compose file uses **host networking** deliberately, so Docker cannot
-punch holes around ufw (the classic published-ports gotcha) — these rules
-are the whole story. ARI (8088) and the receiver (8100) bind to loopback and
+The stack uses **host networking** deliberately, so Docker cannot punch
+holes around ufw (the classic published-ports gotcha) — the rules above are
+the complete exposure. ARI (8088) and the admin (8100) bind to loopback and
 are never reachable from outside.
 
-## 5. Build and start
+**Check:** `ufw status` lists exactly the rules above, `Status: active`.
+
+## 6. Build, start, verify
 
 ```bash
 cd /opt/ghostsip
-docker compose up -d --build
-docker compose ps          # both containers should be "running"
-docker compose logs -f     # watch first startup; Ctrl-C to stop watching
+docker compose up -d --build     # first build takes a few minutes
+docker compose ps                # both containers "running"
+docker compose logs -f           # Ctrl-C to stop watching
 ```
 
-First build takes a few minutes. Then verify from your own machine:
+In the logs you should see, in order: database migrations applying, `admin
+user created: admin`, `Asterisk Ready.`, then supervisord reporting
+`asterisk`, `web` and `watcher` all `RUNNING`, and finally `Lockdown state
+asserted in Asterisk: active=False`.
 
-- `https://YOUR_DOMAIN/healthz` → `{"ok": true}` with a valid certificate
-  (Caddy fetched it automatically — if this hangs, your DNS record isn't
-  resolving to the VPS yet).
-- `https://YOUR_DOMAIN/admin` → **404**. Correct: the public domain serves
-  only the webhook; the admin panel is deliberately not on the internet.
+**Check (public side)**, from your own PC's browser:
 
-## 5b. Admin access — SSH tunnel only
+- `https://YOUR_DOMAIN/healthz` → `{"ok": true}` with a valid padlock.
+  (Hangs or certificate errors = the DNS record isn't resolving to the VPS
+  yet; give it time and `docker compose restart caddy`.)
+- `https://YOUR_DOMAIN/admin` → **404 — this is correct.** The public domain
+  serves only the webhook; the admin is deliberately not on the internet.
 
-The admin never faces the internet: it stays bound to loopback on the VPS,
-and you reach it by port-forwarding over SSH — the security boundary is
-OpenSSH itself, not any login page of ours.
-
-From your Windows machine (OpenSSH is built in):
+**Check (admin side)**, the SSH tunnel — from your PC:
 
 ```powershell
 ssh -L 8100:127.0.0.1:8100 root@YOUR_VPS_IP
 ```
 
-Leave that window open and browse to **http://127.0.0.1:8100/admin** in your
-normal browser. Log in with `admin` + your `GHOSTSIP_ADMIN_PASSWORD`.
+Leave that window open, browse to **http://127.0.0.1:8100/admin**, and log
+in as `admin` with your `GHOSTSIP_ADMIN_PASSWORD`. You should see the
+GhostSIP administration index (Configuration, Handsets, Events, Known
+addresses).
 
-Make it a one-double-click affair: save those contents as
-`ghostsip-admin.cmd` on your desktop —
+Make the tunnel a double-click: save this as `ghostsip-admin.cmd` on your
+desktop —
 
 ```bat
 start http://127.0.0.1:8100/admin
 ssh -L 8100:127.0.0.1:8100 root@YOUR_VPS_IP
 ```
 
-Recommended while you're here — key-only SSH:
+(The browser opens, the terminal window holds the tunnel; close the window
+when done.)
 
-```bash
-# on your PC (once):        ssh-keygen -t ed25519
-# copy the public key over: type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@VPS "cat >> ~/.ssh/authorized_keys"
-# then on the VPS, in /etc/ssh/sshd_config: PasswordAuthentication no
-systemctl restart ssh
-```
-
-Django's session login, CSRF protection and django-axes lockout all remain
-as defence-in-depth behind the tunnel, but nothing of ours is exposed.
-
-## 6. fail2ban (host-side, watching Asterisk's logs)
+## 7. fail2ban — ban SIP brute-forcers at the host firewall
 
 The container writes Asterisk's `messages` and `security` logs to
-`/opt/ghostsip/data/asterisk-logs/` on the host so fail2ban can ban SIP
-brute-forcers at the host firewall:
+`/opt/ghostsip/data/asterisk-logs/` on the host precisely so fail2ban can
+read them:
 
 ```bash
 apt install -y fail2ban
@@ -178,82 +252,114 @@ findtime = 10m
 bantime  = 1h
 EOF
 systemctl restart fail2ban
-fail2ban-client status asterisk   # jail should be live
 ```
 
-The other anti-fraud layers are already in place: the dialplan only routes
-UK national numbers out via the trunk seat, SIP secrets are 32-char
-generated, and you set provider-side barring on the seat in step 0. (See
-docs/decisions.md — no phone site has a static IP, so there's no source-IP
-allowlist; this layered posture is the design.)
+**Check:** `fail2ban-client status asterisk` shows the jail live with both
+log paths.
 
-## 7. Configure everything in the admin
+(The other anti-fraud layers are already in place by design: the dialplan
+only routes UK national numbers out via the trunk seat, SIP secrets are
+32-character generated values, lockdown exists, and you set provider-side
+barring on the seat in stage 0. See docs/decisions.md — no phone site has a
+static IP, so there is deliberately no source-IP allowlist.)
 
-Open `http://127.0.0.1:8100/admin` through the SSH tunnel (step 5b) and log
-in. It's a standard Django admin — two things to set up:
+## 8. Configure everything in the admin
 
-1. **GhostSIP → Configuration** (one page, opens directly):
-   - **Webhook**: pick a username; a password is pre-generated. These become
-     part of the VoIPstudio webhook URL in step 9.
-   - **Ghost-call behaviour**: defaults are fine. Set **Caller name prefix**
-     to the ring-group name VoIPstudio prepends on real calls so ghost
-     entries match.
-   - **Trunk-back seat**: the SIP username/password/registrar of the
-     dedicated VoIPstudio seat.
-   - **Pushover alerts** (recommended): user key + an API token from
-     [pushover.net](https://pushover.net), tick Enabled. Repeated failed SIP
-     registrations then send a **high-priority** push — the brute-force
-     tripwire. Optionally tick the new-address and app-error alerts.
-   - **Save.** The top-right buttons handle the rest: **Reload Asterisk**
-     applies config changes; **Engage lockdown** / **Suspend auto-lockdown
-     1 h** control the callback kill-switch.
-2. **GhostSIP → Handsets → Add handset**: name + endpoint (e.g. `phone1`);
-   the SIP password is auto-generated — copy it for the phone. Save, then
-   **Reload Asterisk** from the Configuration page.
+Through the tunnel, in the admin:
 
-**GhostSIP → Events** is the activity log (webhooks, injections, security,
-lockdown) — filterable, searchable, and it survives restarts.
+**GhostSIP → Configuration** (opens straight onto the single settings page):
 
-Confirm the trunk registered:
+1. **Webhook**: choose a username (e.g. `vswebhook`); a strong password is
+   already pre-generated. Note both — they become part of the webhook URL in
+   stage 10.
+2. **SIP listener**: leave 5560 unless you have a reason.
+3. **Ghost-call behaviour**: defaults are fine. Set **Caller name prefix**
+   to the exact ring-group name VoIPstudio prepends on real calls (so ghost
+   entries look identical in the phones' call logs). Leave **Debug: log full
+   payloads** off until test A.
+4. **Trunk-back seat**: the SIP username / password / registrar of the
+   dedicated VoIPstudio seat from stage 0.
+5. **Pushover alerts**: User Key + API Token from stage 0, tick **Enabled**.
+   Leave *Alert on new device address* on; tick *app errors* too if you want
+   them. (Leave **Auto-lockdown** OFF until the phones are rolled out —
+   each phone's first registration would otherwise trip it.)
+6. **Save**, then use the top-right buttons: **Reload Asterisk** (applies
+   the generated config) and **Send test Pushover** (a test push should
+   arrive on your phone).
+
+**GhostSIP → Handsets → Add handset** for each VVX: a display name
+(e.g. `Front desk`) and an endpoint name (e.g. `phone1` — this doubles as
+the SIP username). The SIP password is auto-generated; **copy it now** for
+the phone config. Save, then **Reload Asterisk** from the Configuration
+page.
+
+**Check:** the trunk seat registers to VoIPstudio —
 
 ```bash
 docker compose exec ghostsip asterisk -rx "pjsip show registrations"
 ```
 
-## 8. Configure the phones
+should show the registration as `Registered`. **GhostSIP → Events** should
+show your configuration saves and no errors.
 
-Per handset instructions: [phones/vvx-ghostsip-line.md](../phones/vvx-ghostsip-line.md).
-Server address = `YOUR_DOMAIN` (or the VPS IP), port **5560** UDP (the
-panel's SIP port — not 5060); credentials from the Handsets tab. Then:
+## 9. Configure the phones
+
+Full per-handset detail: [phones/vvx-ghostsip-line.md](../phones/vvx-ghostsip-line.md).
+In short, on each VVX's web UI, add a new line on the next free registration
+slot:
+
+- **Server**: `YOUR_DOMAIN` (or the VPS IP), port **5560**, UDP
+- **SIP user / Auth user**: the handset's endpoint name (e.g. `phone1`)
+- **Auth password**: the generated secret from the Handsets page
+- Keep the VoIPstudio line as the default outbound line.
+
+**Check:**
 
 ```bash
 docker compose exec ghostsip asterisk -rx "pjsip show endpoints"
 ```
 
-Each configured phone should show a registered contact.
+Each configured phone shows a registered contact (`Avail`). Expect one
+"new device address" Pushover per phone as it first registers — that's the
+address-learning working. Once **all** phones are rolled out, go back to
+Configuration and tick **Auto-lockdown** if you want the automatic
+credential-theft response armed.
 
-## 9. Point VoIPstudio at it
+## 10. Point VoIPstudio at it
 
-In the VoIPstudio dashboard add a **new** webhook (leave the Query Tracker
-one untouched — spec §3):
+In the VoIPstudio dashboard add a **new, separate** webhook (leave the
+existing Query Tracker webhook untouched):
 
-- URL: `https://WEBHOOK_USER:WEBHOOK_PASS@YOUR_DOMAIN/webhook`
-  (the Generate-d values from step 7.1)
-- Event: `call.missed`
+- **URL**: `https://WEBHOOK_USER:WEBHOOK_PASS@YOUR_DOMAIN/webhook`
+  — the username and password from stage 8.1 embedded in the URL
+- **Event**: `call.missed`
 
-## 10. Test
+**Check:** abandon a quick test call to the ring group; **GhostSIP →
+Events** shows the webhook arriving (and, with a phone registered, an
+injection).
 
-Run [test-plan.md](test-plan.md) in order — A (payload verification, with
-the panel's debug toggle on), B (CANCEL semantics on the wire), C (badge +
-display). For test B's packet capture, run tcpdump on the **host** — host
-networking means the container's SIP traffic is right there:
+## 11. Acceptance tests
 
-```bash
-apt install -y tcpdump
-tcpdump -i any -w /tmp/ghost.pcap udp port 5560
-```
+Run [test-plan.md](test-plan.md) in order:
 
-An Asterisk console when needed:
+- **A — payload verification**: turn on *Debug: log full payloads*, make one
+  abandoned and one answered call to the ring group, read the raw JSON in
+  Events, confirm the expectations listed in the test plan, turn the toggle
+  off.
+- **B — CANCEL semantics**: capture a ghost call and confirm no
+  `SIP;cause=200` (pre-verified in development — the CANCEL carried
+  `Q.850;cause=0` — but confirm on real hardware, and confirm the VVX logs
+  the missed call). Capture on the host:
+
+  ```bash
+  apt install -y tcpdump
+  tcpdump -i any -w /tmp/ghost.pcap udp port 5560
+  ```
+
+- **C — badge/display**: ghost entries look right on the VVX next to real
+  missed calls, including the caller-name prefix.
+
+An Asterisk console any time:
 
 ```bash
 docker compose exec ghostsip asterisk -rvvv    # 'exit' leaves it running
@@ -265,28 +371,43 @@ docker compose exec ghostsip asterisk -rvvv    # 'exit' leaves it running
 
 | Task | How |
 |---|---|
-| Watch logs | Admin panel **Logs** tab, or `docker compose logs -f ghostsip` |
-| Restart stack | `docker compose restart` |
-| Update GhostSIP | `cd /opt/ghostsip && git pull && docker compose up -d --build` |
+| Watch activity | Admin → **Events** (filterable/searchable), or `docker compose logs -f ghostsip` |
+| Restart the stack | `cd /opt/ghostsip && docker compose restart` |
+| Update GhostSIP | `cd /opt/ghostsip && git pull && docker compose up -d --build` — DB migrations run automatically at start |
 | Update Caddy | `docker compose pull caddy && docker compose up -d` |
-| OS security updates | `apt update && apt upgrade -y` (or enable `unattended-upgrades`) |
-| Back up | Everything that matters is `/opt/ghostsip/data/ghostsip/` (SQLite DB, generated pjsip.conf, Django secret key) plus your `.env`. Provider snapshots cover the rest. |
-| Rebuild from nothing | New VPS → steps 1–6 → restore `.env` and `data/ghostsip/` → `docker compose up -d --build` → phones re-register on their own. |
+| OS security updates | `apt update && apt upgrade -y`, or `apt install unattended-upgrades` once and forget |
+| Change the admin password | edit `.env`, then `docker compose restart ghostsip` (the container re-applies it) |
+| Rotate the trunk seat password | change it in the VoIPstudio dashboard, paste into Configuration, Save, Reload Asterisk |
+| Lockdown | Configuration page top-right: **Engage/Lift lockdown**, **Suspend auto-lockdown 1 h** (for planned new-phone setup) |
 
-## Fault-finding
+## Backup and restore
 
-1. **Admin → Events** — every webhook event, injection result and error,
-   persisted and filterable by level/kind. First stop for "no missed call
-   appeared".
-2. `docker compose logs ghostsip` — the same plus Asterisk's console output
-   and startup errors (e.g. bad `.env`, the entrypoint says exactly which
-   variable is missing).
-3. `docker compose exec ghostsip asterisk -rx "pjsip show registrations"` —
-   trunk-back seat up?
-4. `docker compose exec ghostsip asterisk -rx "pjsip show endpoints"` —
-   phones registered?
-5. `docker compose exec ghostsip asterisk -rvvv` then `pjsip set logger on`
-   — live SIP on the wire.
-6. Webhook not arriving at all? `https://YOUR_DOMAIN/healthz` from outside,
-   then check the webhook URL's embedded credentials match Settings →
-   Webhook.
+**What to back up** — two things, tiny:
+
+1. `/opt/ghostsip/data/ghostsip/` — the SQLite database (all settings,
+   handsets, events), the generated `pjsip.conf`, and the Django secret key
+2. `/opt/ghostsip/.env`
+
+Copy them off the VPS periodically (from your PC:
+`scp -r root@VPS:/opt/ghostsip/data/ghostsip .` plus the `.env`), and keep
+the provider's snapshots on. **Treat backups like the server** — they
+contain the SIP and webhook secrets in plaintext.
+
+**Restore / rebuild from nothing:** new VPS → stages 1–7 → copy your saved
+`.env` and `data/ghostsip/` back into place → `docker compose up -d --build`.
+Phones re-register on their own; VoIPstudio needs nothing (the domain
+followed you via DNS).
+
+## Troubleshooting
+
+| Symptom | Where to look |
+|---|---|
+| No missed call appeared on the phones | Admin → **Events**: did the webhook arrive? Did injection run? Any `Originate FAILED`? Work backwards from the first missing step. |
+| Webhook never arrives | `https://YOUR_DOMAIN/healthz` from outside (Caddy/DNS ok?); credentials in the VoIPstudio webhook URL match Configuration → Webhook? Events shows `Webhook auth failed` if not. |
+| Phone won't register | `docker compose exec ghostsip asterisk -rx "pjsip show endpoints"`; port 5560/UDP in the phone config and ufw; endpoint name and password match the Handsets page; after handset changes, was **Reload Asterisk** pressed? |
+| Trunk not registered | `... "pjsip show registrations"`; seat credentials in Configuration; VoIPstudio dashboard shows the seat offline? |
+| Callback doesn't ring out | Is **lockdown** engaged (Configuration page shows status)? Trunk registered? The dialplan only routes UK national numbers (0…) by design. |
+| Container won't start | `docker compose logs ghostsip` — the entrypoint names any missing `.env` variable explicitly. |
+| Live SIP debugging | `docker compose exec ghostsip asterisk -rvvv`, then `pjsip set logger on` (`pjsip set logger off` when done). |
+| Locked out of admin (django-axes) | wait 10 minutes, or `docker compose exec ghostsip /opt/ghostsip/venv/bin/python /opt/ghostsip/receiver/manage.py axes_reset` |
+| Pushover silent | Configuration → **Send test Pushover**; check Events for send errors; quiet hours only defer normal-priority pushes (brute-force alerts are high priority and bypass them). |

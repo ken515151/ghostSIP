@@ -16,7 +16,7 @@ VoIPstudio sends `CANCEL` with `Reason: SIP;cause=200;text="Call completed elsew
 | [receiver/](receiver/) | **Django 5.2 LTS app**: VoIPstudio `call.missed` webhook → ARI originate per handset, plus the admin (django.contrib.admin + django-axes + Apprise). The only custom code is the ~250-line domain core in `panel/services/` and `panel/views.py`. |
 | [phones/](phones/) | Per-VVX manual configuration for the GhostSIP line (`reg.N.*`) and optional silent ring class. |
 | [docs/test-plan.md](docs/test-plan.md) | Procedures for the three remaining feasibility tests (A: webhook payload verification, B: CANCEL semantics, C: badge UI). |
-| [docs/deployment.md](docs/deployment.md) | Step-by-step VPS setup: Docker install, firewall, fail2ban, first start, panel walkthrough, day-2 ops. |
+| [docs/deployment.md](docs/deployment.md) | **The install guide** — VPS purchase to acceptance tests, with a verification check per stage, plus day-2 operations, backup/restore and troubleshooting. |
 | [docs/decisions.md](docs/decisions.md) | The "decide during build" items from the spec, with recommendations and what would change them. |
 
 ## Configuration is GUI-driven
