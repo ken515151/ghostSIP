@@ -116,6 +116,27 @@ test A shrinks to verifying the abandoned-call specifics — see
 - **Change it:** thresholds/cooldowns are constants at the top of
   receiver/alerts.py.
 
+## Lockdown — suspend the outbound relay
+
+- **What it is:** a panel-controlled kill switch for the outbound callback
+  relay — the only path on this box that can cost money. Enforced by an
+  Asterisk global (`GHOSTSIP_LOCKDOWN`) the dialplan checks per call, set
+  via ARI: instant, no reload, survives restarts (state in config.json,
+  re-asserted at startup). Ghost-call injection and the phones' normal
+  VoIPstudio line are untouched — only tap-to-callback pauses, so a false
+  positive costs convenience, not operations.
+- **Triggers:** manual button; or automatic on a credential successfully
+  authenticating from a never-seen address, armed by a toggle you switch on
+  AFTER first rollout. **Deliberately never triggered by failed auth
+  attempts** — those are unauthenticated noise anyone can generate, and
+  auto-locking on them would hand outsiders a callback kill switch
+  (fail2ban + the high-priority push cover that case).
+- **Suspend (1 h):** the panel's suspend button disarms the automatic
+  trigger for an hour for planned new-device/new-office setup. New-address
+  alerts still send; manual lockdown still works; re-arms itself.
+- **Change it:** suspend duration is `SUSPEND_SECONDS` in
+  receiver/lockdown.py.
+
 ## Reload mechanism for Asterisk
 
 - **Default:** the panel's "Reload Asterisk" button runs

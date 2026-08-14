@@ -75,6 +75,17 @@ DEFAULTS: dict[str, Any] = {
         # alert-state.json next to this config.
         "alert_on_new_registration": True,
     },
+    "lockdown": {
+        # True = outbound callback relay refused (dialplan gate). Owned by
+        # the /admin/lockdown endpoints — a config Save never changes it.
+        "active": False,
+        # Armed: a credential authenticating from a never-seen address
+        # engages lockdown automatically. Arm AFTER first rollout.
+        "auto_enabled": False,
+        # Epoch time until which the automatic trigger is disarmed
+        # (the panel's 1-hour suspend button, for planned new-device setup).
+        "suspend_until": 0,
+    },
     # Each: {"name": free text, "endpoint": pjsip name, "password": SIP secret}
     "handsets": [],
 }

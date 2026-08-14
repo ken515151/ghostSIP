@@ -54,6 +54,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 import alerts
 import asterisk_config
 import config as cfg
+import lockdown
 from admin_page import ADMIN_HTML
 from logbuffer import buffer as log_buffer
 
@@ -92,11 +93,26 @@ class _ErrorPushHandler(logging.Handler):
 logging.getLogger().addHandler(_ErrorPushHandler(level=logging.ERROR))
 
 
+async def _assert_lockdown_state() -> None:
+    """Re-assert the persisted lockdown state into Asterisk at startup —
+    a restart clears Asterisk globals, and an engaged lockdown must not be
+    silently lifted by a reboot. Retries while Asterisk comes up."""
+    for _ in range(60):
+        conf = cfg.load()
+        if await lockdown.apply_state(conf, log_errors=False):
+            log.info("lockdown state asserted in Asterisk: active=%s", conf["lockdown"]["active"])
+            return
+        await asyncio.sleep(5)
+    log.error("could not assert lockdown state in Asterisk after 5 minutes")
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     watcher = asyncio.create_task(alerts.watch_security_log(cfg.load))
+    asserter = asyncio.create_task(_assert_lockdown_state())
     yield
     watcher.cancel()
+    asserter.cancel()
 
 
 app = FastAPI(title="GhostSIP", docs_url=None, redoc_url=None, lifespan=_lifespan)
@@ -371,6 +387,11 @@ async def post_config(request: Request) -> JSONResponse:
     error = _validate(merged)
     if error:
         return JSONResponse({"saved": False, "error": error}, status_code=422)
+    # Lockdown live-state is owned by the /admin/lockdown endpoints — a Save
+    # from a stale page must never silently lift an engaged lockdown or
+    # cancel a suspension. Only the auto-arm toggle comes from the form.
+    merged["lockdown"]["active"] = old["lockdown"]["active"]
+    merged["lockdown"]["suspend_until"] = old["lockdown"]["suspend_until"]
     cfg.save(merged)
     log.info("config saved via admin panel")
     try:
@@ -385,6 +406,39 @@ async def post_config(request: Request) -> JSONResponse:
 @app.post("/admin/gen-secret", dependencies=[Depends(require_admin)])
 async def gen_secret() -> dict:
     return {"secret": cfg.gen_secret()}
+
+
+@app.post("/admin/lockdown", dependencies=[Depends(require_admin)])
+async def set_lockdown(request: Request) -> JSONResponse:
+    active = bool((await request.json()).get("active"))
+    conf, applied = await lockdown.set_active(active)
+    if active:
+        log.warning("LOCKDOWN engaged manually via admin panel")
+        await alerts.send(
+            conf,
+            "GhostSIP: lockdown engaged",
+            "Outbound callback relay suspended (manual). Lift it in the admin panel.",
+        )
+    else:
+        log.info("lockdown lifted via admin panel")
+        await alerts.send(conf, "GhostSIP: lockdown lifted", "Outbound callback relay restored.")
+    if not applied:
+        log.error("lockdown state saved but Asterisk did not accept the variable — "
+                  "it will be re-asserted at next startup; check ARI")
+    return JSONResponse({"active": active, "asterisk_applied": applied})
+
+
+@app.post("/admin/lockdown/suspend", dependencies=[Depends(require_admin)])
+async def suspend_lockdown() -> JSONResponse:
+    conf = lockdown.suspend()
+    log.info("auto-lockdown suspended for 1 hour via admin panel")
+    await alerts.send(
+        conf,
+        "GhostSIP: auto-lockdown suspended",
+        "Auto-lockdown disarmed for 1 hour (new-device setup). "
+        "New-address alerts still send.",
+    )
+    return JSONResponse({"suspend_until": conf["lockdown"]["suspend_until"]})
 
 
 @app.post("/admin/test-pushover", dependencies=[Depends(require_admin)])
@@ -425,9 +479,15 @@ async def reload_asterisk() -> JSONResponse:
 # --- Admin: logs ------------------------------------------------------------
 @app.get("/admin/logs", dependencies=[Depends(require_admin)])
 async def get_logs(since: int = 0, level: str = "ALL") -> dict:
+    ld = cfg.load()["lockdown"]
     return {
         "records": log_buffer.records(since_seq=since, level=level),
         "counts": log_buffer.counts(),
+        "lockdown": {
+            "active": ld["active"],
+            "auto_enabled": ld["auto_enabled"],
+            "suspend_until": ld["suspend_until"],
+        },
     }
 
 

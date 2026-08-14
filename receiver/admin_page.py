@@ -80,6 +80,7 @@ ADMIN_HTML = r"""<!doctype html>
 <header>
   <span class="dot" id="healthdot"></span>
   <h1>GhostSIP Admin</h1>
+  <span id="lockdown-badge" class="pill ERROR" style="display:none">LOCKDOWN</span>
   <span class="grow"></span>
   <span id="healthtxt" class="lt"></span>
 </header>
@@ -152,6 +153,18 @@ ADMIN_HTML = r"""<!doctype html>
         <div class="toggle"><input type="checkbox" id="pushover_alert_on_errors"><span class="sub">Normal-priority push when the receiver logs an ERROR (rate-limited to one per 15 min).</span></div></div>
       <div class="row"><button class="ghost" id="pushover-test">Send test alert</button>
         <span class="sub">Save first — the test uses the saved keys.</span></div>
+    </div>
+
+    <div class="panel">
+      <h2>Lockdown</h2>
+      <p class="hint">Suspends all outbound callback relaying — the only path that can cost money. Missed-call injection keeps working and the phones' normal VoIPstudio line is unaffected; only tap-to-callback pauses. Applied to Asterisk instantly.</p>
+      <div class="field"><label>Status</label><div><span id="lockdown-status" class="pill">…</span> <span id="suspend-note" class="sub"></span></div></div>
+      <div class="field"><label>Auto-lockdown</label>
+        <div class="toggle"><input type="checkbox" id="lockdown_auto_enabled"><span class="sub">Engage automatically when a credential authenticates from a never-seen address. Arm this AFTER first rollout — each phone's first sighting would otherwise trip it. Never triggered by failed attempts (that would let outsiders switch callbacks off). Saved with Save configuration.</span></div></div>
+      <div class="row">
+        <button class="ghost" id="lockdown-toggle">Lockdown now</button>
+        <button class="ghost" id="lockdown-suspend">Suspend auto-lockdown 1 h</button>
+      </div>
     </div>
   </section>
 
@@ -265,6 +278,8 @@ function fill(){
   pushover_app_token.value=c.pushover.app_token==="__SET__"?"__SET__":(c.pushover.app_token||"");
   pushover_alert_on_errors.checked=!!c.pushover.alert_on_errors;
   pushover_alert_on_new_registration.checked=!!c.pushover.alert_on_new_registration;
+  lockdown_auto_enabled.checked=!!c.lockdown.auto_enabled;
+  updateLockdownUI(c.lockdown);
   renderHandsets();
 }
 function escAttr(s){return (s||"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));}
@@ -315,7 +330,38 @@ function collect(){
   CONFIG.pushover.app_token=pushover_app_token.value;
   CONFIG.pushover.alert_on_errors=pushover_alert_on_errors.checked;
   CONFIG.pushover.alert_on_new_registration=pushover_alert_on_new_registration.checked;
+  CONFIG.lockdown.auto_enabled=lockdown_auto_enabled.checked;
 }
+
+// ---- lockdown ----
+let LOCKDOWN={active:false,suspend_until:0};
+function updateLockdownUI(ld){
+  LOCKDOWN=ld;
+  const st=$("#lockdown-status");
+  st.textContent=ld.active?"ACTIVE — callbacks suspended":(ld.auto_enabled?"clear (auto armed)":"clear (auto off)");
+  st.className="pill "+(ld.active?"ERROR":"INFO");
+  $("#lockdown-toggle").textContent=ld.active?"Lift lockdown":"Lockdown now";
+  $("#lockdown-badge").style.display=ld.active?"":"none";
+  const until=ld.suspend_until*1000;
+  $("#suspend-note").textContent=until>Date.now()
+    ? "auto-lockdown suspended until "+new Date(until).toLocaleTimeString() : "";
+}
+$("#lockdown-toggle").onclick=async()=>{
+  try{
+    const r=await api("/admin/lockdown",{method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({active:!LOCKDOWN.active})});
+    toast(r.active?"Lockdown engaged — outbound callbacks suspended":"Lockdown lifted","ok");
+    if(!r.asterisk_applied) toast("Warning: Asterisk did not accept the change — check Logs","err");
+    CONFIG=await api("/admin/config"); fill();
+  }catch(e){toast("Lockdown change failed: "+e.message,"err");}
+};
+$("#lockdown-suspend").onclick=async()=>{
+  try{
+    await api("/admin/lockdown/suspend",{method:"POST"});
+    toast("Auto-lockdown suspended for 1 hour","ok");
+    CONFIG=await api("/admin/config"); fill();
+  }catch(e){toast("Suspend failed: "+e.message,"err");}
+};
 $("#save").onclick=async()=>{
   collect();
   $("#savestate").textContent="saving…";
@@ -362,6 +408,7 @@ async function pollLogs(){
     const c=r.counts||{}; const order=["ERROR","CRITICAL","WARNING","INFO","DEBUG"];
     $("#log-counts").innerHTML=order.filter(k=>c[k]).map(k=>`<span class="pill ${k}">${k} ${c[k]}</span>`).join(" ");
     updateHealth(c);
+    if(r.lockdown) updateLockdownUI({...r.lockdown, auto_enabled:r.lockdown.auto_enabled});
     if($("#log-follow").checked) view.scrollTop=view.scrollHeight;
   }catch(e){/* transient */}
 }

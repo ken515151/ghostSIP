@@ -30,6 +30,8 @@ from collections import Counter, deque
 
 import httpx
 
+import lockdown
+
 PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
 SECURITY_LOG = os.environ.get("GHOSTSIP_SECURITY_LOG", "/var/log/asterisk/security")
 # Persisted set of endpoint->source-IPs, so "new address" survives restarts.
@@ -206,6 +208,21 @@ async def watch_security_log(load_conf) -> None:
                     conf = load_conf()
                     if conf.get("pushover", {}).get("alert_on_new_registration", True):
                         await send(conf, "GhostSIP: new device address", news)
+                    # Auto-lockdown: a SUCCESSFUL auth from an unknown
+                    # address is the "credential in use from somewhere new"
+                    # signal — the one trigger an attacker can't fire
+                    # without already holding a valid secret.
+                    ld = conf["lockdown"]
+                    if ld.get("auto_enabled") and not ld.get("active") and not lockdown.suspended(conf):
+                        conf2, applied = await lockdown.set_active(True)
+                        log.warning("AUTO-LOCKDOWN engaged: %s (asterisk_applied=%s)", news, applied)
+                        await send(
+                            conf2,
+                            "GhostSIP: AUTO-LOCKDOWN engaged",
+                            f"{news} Outbound callback relay suspended — review and "
+                            f"lift it in the admin panel.",
+                            priority=1,
+                        )
         except FileNotFoundError:
             first_sight = False  # log appears later; read it from the top then
         except asyncio.CancelledError:
