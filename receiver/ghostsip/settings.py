@@ -68,6 +68,11 @@ AUTHENTICATION_BACKENDS = [
 AXES_FAILURE_LIMIT = 10
 AXES_COOLOFF_TIME = timedelta(minutes=10)
 AXES_LOCKOUT_PARAMETERS = ["username"]
+# axes.W006 warns that omitting ip_address lets attackers rotate identifiers
+# to dodge the limit. Not applicable here: the admin is loopback-only (SSH
+# tunnel), so every request's IP is 127.0.0.1 — locking by username is the
+# meaningful key. Silence the check rather than add a useless parameter.
+SILENCED_SYSTEM_CHECKS = ["axes.W006"]
 
 ROOT_URLCONF = "ghostsip.urls"
 
