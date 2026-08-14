@@ -52,12 +52,11 @@ Gather these first; every later stage assumes them.
 4. **A Pushover account** (optional but recommended, ~one-off $5 mobile
    licence) — note your **User Key**, and create an *Application* called
    GhostSIP to get an **API Token**.
-5. **Access to the GhostSIP repo** — it's private
-   (`github.com/ken515151/ghostSIP`), so create a GitHub **fine-grained
-   personal access token** with read-only access to just this repo
-   (GitHub → Settings → Developer settings → Fine-grained tokens) for the
-   clone in stage 4. Alternatively make the repo public, or `scp` the folder
-   up instead.
+5. **Access to the GhostSIP repo** (`github.com/ken515151/ghostSIP`) —
+   currently public, so the clone in stage 4 needs nothing. If it's ever
+   made private again, create a GitHub **fine-grained personal access
+   token** with read-only access to just this repo and clone with
+   `https://USER:TOKEN@github.com/...` instead.
 
 ## 1. Create the VPS and log in
 
@@ -133,15 +132,10 @@ versions.
 
 ```bash
 apt install -y git
-git clone https://YOUR_GITHUB_USER:YOUR_TOKEN@github.com/ken515151/ghostSIP.git /opt/ghostsip
+git clone https://github.com/ken515151/ghostSIP.git /opt/ghostsip
 cd /opt/ghostsip
 cp deploy/.env.example .env
 ```
-
-(The token in the URL is the fine-grained PAT from stage 0.5. Git stores the
-remote URL with the token in `/opt/ghostsip/.git/config` — root-only on this
-box, and the token is read-only to one repo, so acceptable; revoke it on
-GitHub any time.)
 
 Generate two strong values and edit the file:
 
