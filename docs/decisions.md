@@ -116,6 +116,35 @@ test A shrinks to verifying the abandoned-call specifics — see
 - **Change it:** thresholds/cooldowns are constants at the top of
   receiver/alerts.py.
 
+## Encryption status — what is enforced vs what is not (audited 14 Aug 2026)
+
+Enforced, not merely preferred:
+
+- **HTTPS for webhook + admin:** Caddy redirects HTTP→HTTPS automatically
+  and only serves the site over TLS (1.2+); the receiver itself listens on
+  loopback only, so there is no plaintext path from outside. Webhook and
+  admin Basic Auth credentials therefore only ever cross the wire encrypted.
+- **Pushover:** HTTPS API.
+- **ARI and the receiver:** plaintext HTTP but bound to 127.0.0.1 inside
+  the container/host — never reachable externally (and never exposed in
+  ufw).
+
+NOT encrypted — known, accepted for now:
+
+- **SIP signalling (UDP 5560):** digest authentication means passwords
+  never cross the wire (and 32-char random secrets make offline cracking of
+  a captured challenge infeasible), but the signalling itself — caller
+  numbers, call metadata — is readable by an on-path observer.
+- **RTP audio for callbacks:** cleartext G.711 across the internet between
+  phone and VPS, like most SIP trunking today. An on-path (ISP-level)
+  attacker could listen to a callback. Note the phones' existing VoIPstudio
+  and Voipfone lines have the same property unless TLS/SRTP was enabled
+  there.
+- **Upgrade path if wanted:** PJSIP TLS transport + SRTP on the GhostSIP
+  line (VVX supports both); cost is cert management on the transport and
+  per-phone config. The VoIPstudio leg's encryption is theirs to offer.
+  Worth doing if ever serving client sites; optional polish for the shop.
+
 ## Lockdown — suspend the outbound relay
 
 - **What it is:** a panel-controlled kill switch for the outbound callback

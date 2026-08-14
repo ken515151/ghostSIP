@@ -125,13 +125,30 @@ ENDPOINT_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
 
 # --- Auth -------------------------------------------------------------------
-def require_admin(credentials: HTTPBasicCredentials = Depends(_admin_auth)) -> None:
+def require_admin(
+    request: Request, credentials: HTTPBasicCredentials = Depends(_admin_auth)
+) -> None:
     ok = secrets.compare_digest(credentials.username, ADMIN_USERNAME) & secrets.compare_digest(
         credentials.password, ADMIN_PASSWORD
     )
     if not ok:
+        client = request.client.host if request.client else "?"
+        log.warning("admin auth failed for user %r from %s", credentials.username, client)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, headers={"WWW-Authenticate": "Basic"}
+        )
+
+
+def require_admin_post(request: Request) -> None:
+    """CSRF guard for state-changing admin endpoints. Basic Auth is attached
+    automatically by the browser, so a malicious page could form-POST e.g.
+    /admin/lockdown/suspend cross-site. Browsers only send custom headers
+    after a CORS preflight, which this app never grants — so requiring one
+    blocks any cross-origin request. The panel's JS adds it to every call."""
+    if request.headers.get("x-ghostsip") != "1":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="missing X-GhostSIP header (cross-site request refused)",
         )
 
 
@@ -286,13 +303,8 @@ async def webhook(request: Request) -> JSONResponse:
 # --- Health -----------------------------------------------------------------
 @app.get("/healthz")
 async def healthz() -> dict:
-    conf = cfg.load()
-    return {
-        "ok": True,
-        "handsets": len(conf["handsets"]),
-        "webhook_configured": bool(conf["webhook"]["username"]),
-        "log_counts": log_buffer.counts(),
-    }
+    # Unauthenticated and internet-reachable — reveal nothing beyond liveness.
+    return {"ok": True}
 
 
 # --- Admin: page ------------------------------------------------------------
@@ -379,7 +391,7 @@ async def get_config() -> JSONResponse:
     return JSONResponse(_redact(cfg.load()))
 
 
-@app.post("/admin/config", dependencies=[Depends(require_admin)])
+@app.post("/admin/config", dependencies=[Depends(require_admin), Depends(require_admin_post)])
 async def post_config(request: Request) -> JSONResponse:
     old = cfg.load()
     new = _unredact(await request.json(), old)
@@ -403,12 +415,12 @@ async def post_config(request: Request) -> JSONResponse:
     return JSONResponse({"saved": True, "pjsip_written": True})
 
 
-@app.post("/admin/gen-secret", dependencies=[Depends(require_admin)])
+@app.post("/admin/gen-secret", dependencies=[Depends(require_admin), Depends(require_admin_post)])
 async def gen_secret() -> dict:
     return {"secret": cfg.gen_secret()}
 
 
-@app.post("/admin/lockdown", dependencies=[Depends(require_admin)])
+@app.post("/admin/lockdown", dependencies=[Depends(require_admin), Depends(require_admin_post)])
 async def set_lockdown(request: Request) -> JSONResponse:
     active = bool((await request.json()).get("active"))
     conf, applied = await lockdown.set_active(active)
@@ -428,7 +440,7 @@ async def set_lockdown(request: Request) -> JSONResponse:
     return JSONResponse({"active": active, "asterisk_applied": applied})
 
 
-@app.post("/admin/lockdown/suspend", dependencies=[Depends(require_admin)])
+@app.post("/admin/lockdown/suspend", dependencies=[Depends(require_admin), Depends(require_admin_post)])
 async def suspend_lockdown() -> JSONResponse:
     conf = lockdown.suspend()
     log.info("auto-lockdown suspended for 1 hour via admin panel")
@@ -441,7 +453,7 @@ async def suspend_lockdown() -> JSONResponse:
     return JSONResponse({"suspend_until": conf["lockdown"]["suspend_until"]})
 
 
-@app.post("/admin/test-pushover", dependencies=[Depends(require_admin)])
+@app.post("/admin/test-pushover", dependencies=[Depends(require_admin), Depends(require_admin_post)])
 async def test_pushover() -> JSONResponse:
     conf = cfg.load()
     po = conf["pushover"]
@@ -457,7 +469,7 @@ async def test_pushover() -> JSONResponse:
     )
 
 
-@app.post("/admin/reload-asterisk", dependencies=[Depends(require_admin)])
+@app.post("/admin/reload-asterisk", dependencies=[Depends(require_admin), Depends(require_admin_post)])
 async def reload_asterisk() -> JSONResponse:
     if not ASTERISK_RELOAD_CMD:
         return JSONResponse({"ok": False, "detail": "reload command disabled"}, status_code=400)

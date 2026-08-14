@@ -230,6 +230,9 @@ function toast(msg, kind){
   setTimeout(()=>t.className="", 3200);
 }
 async function api(path, opts){
+  opts = opts || {};
+  // CSRF guard: the server refuses admin POSTs without this custom header
+  opts.headers = Object.assign({"X-GhostSIP":"1"}, opts.headers || {});
   const r = await fetch(path, opts);
   if(!r.ok){
     let msg = await r.text();

@@ -80,6 +80,12 @@ Set in `.env`:
 - `GHOSTSIP_ARI_PASSWORD` — second generated value (internal
   Asterisk↔receiver secret; you never type it anywhere else)
 
+Then keep it root-only:
+
+```bash
+chmod 600 .env
+```
+
 These are the **only** hand-edited settings. Everything else is done in the
 web admin panel.
 

@@ -31,9 +31,11 @@ chown root:asterisk /etc/asterisk/ari.conf
 
 # The admin panel writes the real pjsip.conf here (mounted volume); Asterisk
 # includes it. An empty file on first boot is fine — no endpoints until the
-# panel saves, but Asterisk starts and the panel is reachable.
+# panel saves, but Asterisk starts and the panel is reachable. The receiver
+# runs as the asterisk user (supervisord.conf), so it must own this dir.
 mkdir -p /etc/ghostsip
 touch /etc/ghostsip/pjsip.conf
+chown -R asterisk:asterisk /etc/ghostsip
 chmod 644 /etc/ghostsip/pjsip.conf
 
 # Runtime dirs Asterisk needs when started directly rather than via init.
