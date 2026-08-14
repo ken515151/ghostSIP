@@ -125,18 +125,47 @@ ENDPOINT_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
 
 # --- Auth -------------------------------------------------------------------
+# Login rate limiting: the panel is internet-reachable (no static IPs to
+# allowlist), so failed Basic Auth attempts are throttled per source IP.
+# Real client IPs come from Caddy via --proxy-headers (supervisord.conf).
+ADMIN_FAIL_LIMIT = 10
+ADMIN_FAIL_WINDOW = 600.0  # seconds
+ADMIN_LOCKOUT = 600.0
+
+_admin_fails: dict[str, list[float]] = {}
+_admin_locked_until: dict[str, float] = {}
+
+
 def require_admin(
     request: Request, credentials: HTTPBasicCredentials = Depends(_admin_auth)
 ) -> None:
+    ip = request.client.host if request.client else "?"
+    now = time.monotonic()
+    if _admin_locked_until.get(ip, 0) > now:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="too many failed logins — locked out, try again later",
+        )
     ok = secrets.compare_digest(credentials.username, ADMIN_USERNAME) & secrets.compare_digest(
         credentials.password, ADMIN_PASSWORD
     )
     if not ok:
-        client = request.client.host if request.client else "?"
-        log.warning("admin auth failed for user %r from %s", credentials.username, client)
+        fails = _admin_fails.setdefault(ip, [])
+        fails.append(now)
+        fails[:] = [t for t in fails if now - t < ADMIN_FAIL_WINDOW]
+        log.warning("admin auth failed for user %r from %s", credentials.username, ip)
+        if len(fails) >= ADMIN_FAIL_LIMIT:
+            _admin_locked_until[ip] = now + ADMIN_LOCKOUT
+            del _admin_fails[ip]
+            # ERROR level → reaches Pushover when alert-on-errors is enabled
+            log.error("admin login brute force from %s — locked out for 10 minutes", ip)
+        if len(_admin_locked_until) > 1000:  # bound memory under a spray
+            for k in [k for k, t in _admin_locked_until.items() if t <= now]:
+                del _admin_locked_until[k]
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, headers={"WWW-Authenticate": "Basic"}
         )
+    _admin_fails.pop(ip, None)
 
 
 def require_admin_post(request: Request) -> None:
