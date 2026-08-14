@@ -278,19 +278,32 @@ read them:
 apt install -y fail2ban
 cat > /etc/fail2ban/jail.d/ghostsip-asterisk.conf <<'EOF'
 [asterisk]
-enabled  = true
-backend  = polling
-logpath  = /opt/ghostsip/data/asterisk-logs/messages
-           /opt/ghostsip/data/asterisk-logs/security
-maxretry = 5
-findtime = 10m
-bantime  = 1h
+enabled   = true
+backend   = polling
+logpath   = /opt/ghostsip/data/asterisk-logs/messages
+            /opt/ghostsip/data/asterisk-logs/security
+maxretry  = 5
+findtime  = 10m
+bantime   = 1h
+; Ban on ALL ports. The stock asterisk jail assumes SIP on 5060/5061, so
+; its bans would miss our port entirely (found the hard way: a "banned" IP
+; kept registering on 5560). Allports also survives changing the SIP port.
+banaction = %(banaction_allports)s
+; Trusted phone sites — NEVER ban these. Phones share their site's public
+; IP, so one mis-registering phone could otherwise lock out every phone at
+; that location for an hour. Space-separated; keep loopback entries.
+ignoreip  = 127.0.0.1/8 ::1 YOUR_SHOP_PUBLIC_IP
 EOF
 systemctl restart fail2ban
 ```
 
 **Check:** `fail2ban-client status asterisk` shows the jail live with both
 log paths.
+
+Useful later: `fail2ban-client status asterisk` lists currently banned IPs;
+`fail2ban-client set asterisk unbanip SOME_IP` frees one immediately. If a
+phone site's IP ever changes and its phones get banned mid-setup, that's
+the release valve — then update `ignoreip` and `systemctl restart fail2ban`.
 
 (The other anti-fraud layers are already in place by design: the dialplan
 only routes UK national numbers out via the trunk seat, SIP secrets are
@@ -327,6 +340,16 @@ Through the tunnel, in the admin:
 the SIP username). The SIP password is auto-generated; **copy it now** for
 the phone config. Save, then **Reload Asterisk** from the Configuration
 page.
+
+> **Order matters: Save + Reload Asterisk BEFORE configuring the phone.**
+> Until the reload, the endpoint doesn't exist in Asterisk, so the phone's
+> perfectly-correct credentials are rejected — it retries continuously,
+> and those rejections look exactly like a brute-force attack to fail2ban.
+> With the site's IP in `ignoreip` (stage 7) it's only log noise, but the
+> tidy sequence is: add handset → Save → Reload Asterisk → then point the
+> phone at the server. Same rule every time settings change: **Save writes
+> the config; Reload Asterisk applies it** — nothing changes live until
+> the reload.
 
 **Check:** the trunk seat registers to VoIPstudio —
 
