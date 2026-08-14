@@ -146,6 +146,8 @@ ADMIN_HTML = r"""<!doctype html>
         <div class="toggle"><input type="checkbox" id="pushover_enabled"></div></div>
       <div class="field"><label>User key</label><input type="text" id="pushover_user_key"></div>
       <div class="field"><label>API token</label><input type="password" id="pushover_app_token"></div>
+      <div class="field"><label>Alert on new device address</label>
+        <div class="toggle"><input type="checkbox" id="pushover_alert_on_new_registration"><span class="sub">Normal-priority push when a phone's credential authenticates from an address it has never used before. Routine re-registrations stay silent; expect one per phone when first deployed, then only on ISP IP changes, site moves — or a stolen credential.</span></div></div>
       <div class="field"><label>Also alert on app errors</label>
         <div class="toggle"><input type="checkbox" id="pushover_alert_on_errors"><span class="sub">Normal-priority push when the receiver logs an ERROR (rate-limited to one per 15 min).</span></div></div>
       <div class="row"><button class="ghost" id="pushover-test">Send test alert</button>
@@ -262,6 +264,7 @@ function fill(){
   pushover_user_key.value=c.pushover.user_key||"";
   pushover_app_token.value=c.pushover.app_token==="__SET__"?"__SET__":(c.pushover.app_token||"");
   pushover_alert_on_errors.checked=!!c.pushover.alert_on_errors;
+  pushover_alert_on_new_registration.checked=!!c.pushover.alert_on_new_registration;
   renderHandsets();
 }
 function escAttr(s){return (s||"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));}
@@ -311,6 +314,7 @@ function collect(){
   CONFIG.pushover.user_key=pushover_user_key.value.trim();
   CONFIG.pushover.app_token=pushover_app_token.value;
   CONFIG.pushover.alert_on_errors=pushover_alert_on_errors.checked;
+  CONFIG.pushover.alert_on_new_registration=pushover_alert_on_new_registration.checked;
 }
 $("#save").onclick=async()=>{
   collect();

@@ -21,6 +21,7 @@ handling, and the alerting module never alerts about itself.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -31,11 +32,15 @@ import httpx
 
 PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
 SECURITY_LOG = os.environ.get("GHOSTSIP_SECURITY_LOG", "/var/log/asterisk/security")
+# Persisted set of endpoint->source-IPs, so "new address" survives restarts.
+# Lives in the mounted /etc/ghostsip volume alongside config.json.
+ALERT_STATE = os.environ.get("GHOSTSIP_ALERT_STATE", "/etc/ghostsip/alert-state.json")
 
 # Asterisk security-log events that mean "someone failed SIP auth".
 FAIL_EVENTS = {"InvalidAccountID", "ChallengeResponseFailed", "InvalidPassword", "FailedACL"}
 _EVENT_RE = re.compile(r'SecurityEvent="(?P<event>\w+)"')
 _ADDR_RE = re.compile(r'RemoteAddress="[^"/]+/[^"/]+/(?P<ip>[^"/]+)/')
+_ACCOUNT_RE = re.compile(r'AccountID="(?P<acct>[^"]+)"')
 
 BRUTE_THRESHOLD = 5    # this many failures...
 BRUTE_WINDOW = 600     # ...within this many seconds trips the alert
@@ -120,11 +125,60 @@ class BruteForceDetector:
         return summary
 
 
+class NewSourceDetector:
+    """Tracks which source addresses each endpoint has successfully
+    authenticated from, and reports when a credential is used from an
+    address not seen before — "your phone's secret just got used from
+    somewhere new". Same-address REGISTER refreshes (every few minutes,
+    forever) stay silent. Known addresses persist across restarts."""
+
+    def __init__(self, state_path: str = ALERT_STATE):
+        self.state_path = state_path
+        self.known: dict[str, set[str]] = {}
+        try:
+            with open(state_path, encoding="utf-8") as fh:
+                self.known = {k: set(v) for k, v in json.load(fh).items()}
+        except (OSError, ValueError):
+            pass  # first run, or unreadable state — start fresh
+
+    def feed(self, line: str) -> str | None:
+        m = _EVENT_RE.search(line)
+        if not m or m.group("event") != "SuccessfulAuth":
+            return None
+        acct = _ACCOUNT_RE.search(line)
+        addr = _ADDR_RE.search(line)
+        if not acct or not addr:
+            return None
+        endpoint, ip = acct.group("acct"), addr.group("ip")
+        ips = self.known.setdefault(endpoint, set())
+        if ip in ips:
+            return None
+        previous = ", ".join(sorted(ips)) or "none on record"
+        ips.add(ip)
+        self._save()
+        return (
+            f"SIP endpoint '{endpoint}' authenticated from new address {ip} "
+            f"(previously: {previous}). Expected after an ISP IP change or a "
+            f"phone moving site; investigate if neither."
+        )
+
+    def _save(self) -> None:
+        try:
+            tmp = f"{self.state_path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({k: sorted(v) for k, v in self.known.items()}, fh, indent=2)
+            os.replace(tmp, self.state_path)
+        except OSError as exc:
+            log.warning("could not persist alert state: %s", exc)
+
+
 async def watch_security_log(load_conf) -> None:
-    """Background task: tail the Asterisk security log and raise the
-    HIGH-priority brute-force alert. Survives the file not existing yet,
-    log rotation, and any parse surprise."""
+    """Background task: tail the Asterisk security log. Raises the
+    HIGH-priority brute-force alert and the normal-priority new-address
+    alert. Survives the file not existing yet, log rotation, and any
+    parse surprise."""
     detector = BruteForceDetector()
+    sources = NewSourceDetector()
     pos = 0
     first_sight = True
     while True:
@@ -146,6 +200,12 @@ async def watch_security_log(load_conf) -> None:
                     await send(
                         load_conf(), "GhostSIP: SIP brute force", summary, priority=1
                     )
+                news = sources.feed(line)
+                if news:
+                    log.info("new device address: %s", news)
+                    conf = load_conf()
+                    if conf.get("pushover", {}).get("alert_on_new_registration", True):
+                        await send(conf, "GhostSIP: new device address", news)
         except FileNotFoundError:
             first_sight = False  # log appears later; read it from the top then
         except asyncio.CancelledError:

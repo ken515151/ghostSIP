@@ -102,8 +102,14 @@ test A shrinks to verifying the abandoned-call specifics — see
   alerts). Once enabled, a **high-priority** push fires when ≥5 failed SIP
   auth/registration attempts land within 10 minutes (the receiver tails
   Asterisk's security log — same container, so it's just a file). At most
-  one brute-force alert per hour. Optional second toggle: normal-priority
-  push when the receiver logs an ERROR, max one per 15 minutes.
+  one brute-force alert per hour. A **normal-priority** push also fires when
+  an endpoint successfully authenticates from an address it has never used
+  before (on by default; known addresses persist in alert-state.json) —
+  deliberately NOT on every registration, since phones re-REGISTER every few
+  minutes and that would be pure spam; the new-address event is the one that
+  means "credential in use from somewhere new". Optional third toggle:
+  normal-priority push when the receiver logs an ERROR, max one per
+  15 minutes.
 - **Why:** with SIP open to the internet and no source-IP allowlist, the
   brute-force tripwire is the "someone is guessing passwords" signal;
   fail2ban does the banning, Pushover does the telling-Ken.

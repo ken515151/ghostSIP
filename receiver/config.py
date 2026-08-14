@@ -69,6 +69,11 @@ DEFAULTS: dict[str, Any] = {
         "app_token": "",
         # Optional: normal-priority push when the receiver logs an ERROR.
         "alert_on_errors": False,
+        # Normal-priority push when an endpoint successfully authenticates
+        # from an address it has never used before (same-IP re-registration
+        # refreshes stay silent). Known addresses persist in
+        # alert-state.json next to this config.
+        "alert_on_new_registration": True,
     },
     # Each: {"name": free text, "endpoint": pjsip name, "password": SIP secret}
     "handsets": [],
