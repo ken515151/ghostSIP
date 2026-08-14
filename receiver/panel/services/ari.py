@@ -43,7 +43,18 @@ def originate_ghost_call(endpoint: str, caller: str, config) -> tuple[bool, str]
         body["variables"] = {"PJSIP_HEADER(add,Alert-Info)": config.alert_info}
     try:
         resp = requests.post(f"{ARI_URL}/channels", params=params, json=body, auth=_auth(), timeout=10)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            try:
+                detail = resp.json().get("error", "") or resp.text[:120]
+            except ValueError:
+                detail = resp.text[:120]
+            hint = ""
+            if "allocation" in detail.lower():
+                # Asterisk's "Allocation failed" here almost always means the
+                # endpoint has no registered contact to send the INVITE to.
+                hint = (" — usually the phone is not registered right now "
+                        "(check System status; common straight after a rebuild)")
+            return False, f"ARI {resp.status_code}: {detail}{hint}"
         return True, "ok"
     except requests.RequestException as exc:
         return False, str(exc)

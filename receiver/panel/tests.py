@@ -103,6 +103,22 @@ class WebhookTests(TestCase):
         self.assertEqual(self.client.get("/healthz").json(), {"ok": True})
 
 
+class OriginateErrorTests(TestCase):
+    @patch("panel.services.ari.requests.post")
+    def test_allocation_failure_gets_a_helpful_hint(self, post):
+        from unittest.mock import MagicMock
+
+        from panel.services import ari
+
+        post.return_value = MagicMock(
+            status_code=500, json=lambda: {"error": "Allocation failed"}
+        )
+        ok, detail = ari.originate_ghost_call("phone1", "01224622312", Configuration.load())
+        self.assertFalse(ok)
+        self.assertIn("Allocation failed", detail)
+        self.assertIn("not registered", detail)
+
+
 class PhoneTests(TestCase):
     def test_normalisation(self):
         self.assertEqual(normalise_caller("441224622312"), "01224622312")
