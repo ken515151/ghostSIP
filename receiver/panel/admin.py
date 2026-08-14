@@ -11,7 +11,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 
 from panel.models import Configuration, Event, Handset, KnownAddress
-from panel.services import ari, lockdown, pjsip
+from panel.services import alerts, ari, lockdown, pjsip
 
 
 def _regenerate_pjsip(request) -> None:
@@ -80,6 +80,7 @@ class ConfigurationAdmin(admin.ModelAdmin):
             path("lockdown/lift/", wrap(self.lift_view), name="panel_lockdown_lift"),
             path("lockdown/suspend/", wrap(self.suspend_view), name="panel_lockdown_suspend"),
             path("reload-asterisk/", wrap(self.reload_view), name="panel_reload_asterisk"),
+            path("test-pushover/", wrap(self.test_pushover_view), name="panel_test_pushover"),
         ]
         return extra + super().get_urls()
 
@@ -109,6 +110,18 @@ class ConfigurationAdmin(admin.ModelAdmin):
             lockdown.suspend_auto()
             messages.info(request, "Auto-lockdown suspended for 1 hour. "
                                    "New-address alerts still send.")
+        return self._back()
+
+    def test_pushover_view(self, request):
+        if request.method == "POST":
+            config = Configuration.load()
+            if not (config.pushover_enabled and config.pushover_user_key
+                    and config.pushover_api_token):
+                messages.error(request, "Fill in the Pushover keys, tick Enabled and Save first.")
+            elif alerts.send(config, "GhostSIP test", "Test alert from the admin."):
+                messages.success(request, "Test alert sent — check your phone.")
+            else:
+                messages.error(request, "Pushover rejected the send — check the keys.")
         return self._back()
 
     def reload_view(self, request):
