@@ -89,7 +89,8 @@ web admin panel.
 ufw allow OpenSSH
 ufw allow 80/tcp            # ACME certificate challenge + redirect
 ufw allow 443/tcp           # webhook + admin panel
-ufw allow 5060/udp          # SIP
+ufw allow 5560/udp          # SIP — non-standard on purpose; must match the
+                            # panel's "SIP port" setting (default 5560)
 ufw allow 10000:20000/udp   # RTP (matches asterisk/rtp.conf)
 ufw default deny incoming
 ufw enable
@@ -156,10 +157,15 @@ Open `https://YOUR_DOMAIN/admin`:
 3. **Settings → Ghost-call behaviour**: defaults are fine to start. Set
    **Caller name prefix** to the ring-group name VoIPstudio prepends on real
    calls so ghost entries match.
-4. **Handsets**: one row per VVX — pick an endpoint name (e.g. `phone1`),
+4. **Settings → Pushover alerts** (recommended): user key + an API token
+   from [pushover.net](https://pushover.net), tick Enabled. Repeated failed
+   SIP registrations then send a **high-priority** push — the brute-force
+   tripwire (no IP allowlist exists, so this is how you'd find out).
+   Optionally tick app-error alerts too. Save, then *Send test alert*.
+5. **Handsets**: one row per VVX — pick an endpoint name (e.g. `phone1`),
    click *Gen* for its SIP password.
-5. **Save configuration** → then **Reload Asterisk**.
-6. Check the **pjsip.conf** tab shows your handsets and the trunk
+6. **Save configuration** → then **Reload Asterisk**.
+7. Check the **pjsip.conf** tab shows your handsets and the trunk
    registration, and the **Logs** tab is clean.
 
 Confirm the trunk registered:
@@ -171,8 +177,8 @@ docker compose exec ghostsip asterisk -rx "pjsip show registrations"
 ## 8. Configure the phones
 
 Per handset instructions: [phones/vvx-ghostsip-line.md](../phones/vvx-ghostsip-line.md).
-Server address = `YOUR_DOMAIN` (or the VPS IP), port 5060 UDP; credentials
-from the Handsets tab. Then:
+Server address = `YOUR_DOMAIN` (or the VPS IP), port **5560** UDP (the
+panel's SIP port — not 5060); credentials from the Handsets tab. Then:
 
 ```bash
 docker compose exec ghostsip asterisk -rx "pjsip show endpoints"
@@ -198,7 +204,7 @@ networking means the container's SIP traffic is right there:
 
 ```bash
 apt install -y tcpdump
-tcpdump -i any -w /tmp/ghost.pcap udp port 5060
+tcpdump -i any -w /tmp/ghost.pcap udp port 5560
 ```
 
 An Asterisk console when needed:

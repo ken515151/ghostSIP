@@ -44,12 +44,14 @@ import re
 import secrets
 import subprocess
 import time
+from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
+import alerts
 import asterisk_config
 import config as cfg
 from admin_page import ADMIN_HTML
@@ -65,13 +67,39 @@ ASTERISK_RELOAD_CMD = os.environ.get(
     "GHOSTSIP_ASTERISK_RELOAD_CMD", "asterisk -rx 'pjsip reload'"
 )
 
-# --- Logging: journald + in-memory ring buffer for the GUI ------------------
+# --- Logging: container stdout + in-memory ring buffer for the GUI ----------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log_buffer.setLevel(logging.INFO)
 logging.getLogger().addHandler(log_buffer)
 log = logging.getLogger("ghostsip")
 
-app = FastAPI(title="GhostSIP", docs_url=None, redoc_url=None)
+
+class _ErrorPushHandler(logging.Handler):
+    """ERROR-level records → optional Pushover push (rate-limited in
+    alerts.notify_error). Skips the alerts module's own records so a
+    Pushover failure can never alert about itself."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.name.startswith("ghostsip.alerts"):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # logged outside the event loop (startup) — skip
+        loop.create_task(alerts.notify_error(cfg.load(), record.getMessage()))
+
+
+logging.getLogger().addHandler(_ErrorPushHandler(level=logging.ERROR))
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    watcher = asyncio.create_task(alerts.watch_security_log(cfg.load))
+    yield
+    watcher.cancel()
+
+
+app = FastAPI(title="GhostSIP", docs_url=None, redoc_url=None, lifespan=_lifespan)
 _admin_auth = HTTPBasic()
 _webhook_auth = HTTPBasic(auto_error=True)
 
@@ -263,7 +291,12 @@ def _redact(conf: dict) -> dict:
     import copy
 
     out = copy.deepcopy(conf)
-    for section, key in [("webhook", "password"), ("ari", "password"), ("trunkback", "password")]:
+    for section, key in [
+        ("webhook", "password"),
+        ("ari", "password"),
+        ("trunkback", "password"),
+        ("pushover", "app_token"),
+    ]:
         if out[section].get(key):
             out[section][key] = "__SET__"
     for hs in out["handsets"]:
@@ -276,7 +309,12 @@ def _unredact(new: dict, old: dict) -> dict:
     """Keep the stored secret wherever the browser sent the placeholder.
     Handset secrets map by endpoint name — renaming an endpoint while its
     password shows __SET__ drops the secret (regenerate it after a rename)."""
-    for section, key in [("webhook", "password"), ("ari", "password"), ("trunkback", "password")]:
+    for section, key in [
+        ("webhook", "password"),
+        ("ari", "password"),
+        ("trunkback", "password"),
+        ("pushover", "app_token"),
+    ]:
         if new.get(section, {}).get(key) == "__SET__":
             new[section][key] = old[section][key]
     old_by_ep = {h.get("endpoint"): h for h in old.get("handsets", [])}
@@ -301,7 +339,7 @@ def _validate(conf: dict) -> str | None:
             return f"handset {ep!r} has no SIP password — use Gen"
         if any(c in hs["password"] for c in "\r\n[]"):
             return f"handset {ep!r} password contains characters not usable in pjsip.conf"
-    for section in ("webhook", "ari", "trunkback"):
+    for section in ("webhook", "ari", "trunkback", "pushover"):
         for key, val in conf[section].items():
             if isinstance(val, str) and any(c in val for c in "\r\n"):
                 return f"{section}.{key} must not contain line breaks"
@@ -312,6 +350,11 @@ def _validate(conf: dict) -> str | None:
     trunk_user = conf["trunkback"].get("username", "")
     if trunk_user and any(c in trunk_user for c in "[]@ "):
         return "trunk-back username contains characters not usable in pjsip.conf"
+    port = conf["sip"].get("port")
+    if not isinstance(port, int) or not 1024 <= port <= 65535:
+        return "SIP port must be a number between 1024 and 65535"
+    if port in (8088, 8100):
+        return "SIP port clashes with an internal service port (8088/8100)"
     return None
 
 
@@ -342,6 +385,22 @@ async def post_config(request: Request) -> JSONResponse:
 @app.post("/admin/gen-secret", dependencies=[Depends(require_admin)])
 async def gen_secret() -> dict:
     return {"secret": cfg.gen_secret()}
+
+
+@app.post("/admin/test-pushover", dependencies=[Depends(require_admin)])
+async def test_pushover() -> JSONResponse:
+    conf = cfg.load()
+    po = conf["pushover"]
+    if not (po["enabled"] and po["user_key"] and po["app_token"]):
+        return JSONResponse(
+            {"ok": False, "detail": "fill in the Pushover keys, tick Enabled and Save first"},
+            status_code=400,
+        )
+    ok = await alerts.send(conf, "GhostSIP test", "Test alert from the admin panel.")
+    return JSONResponse(
+        {"ok": ok, "detail": "sent" if ok else "send failed — check the keys and the Logs tab"},
+        status_code=200 if ok else 502,
+    )
 
 
 @app.post("/admin/reload-asterisk", dependencies=[Depends(require_admin)])

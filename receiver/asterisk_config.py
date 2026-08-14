@@ -21,7 +21,9 @@ _HEADER = """;==================================================================
 [transport-udp]
 type=transport
 protocol=udp
-bind=0.0.0.0:5060
+bind=0.0.0.0:{port}
+; lets a port change from the panel apply on 'pjsip reload'
+allow_reload=yes
 
 [vvx-endpoint](!)
 type=endpoint
@@ -104,7 +106,8 @@ match={server}
 
 
 def render(config: dict) -> str:
-    parts = [_HEADER]
+    port = int(config.get("sip", {}).get("port") or 5560)
+    parts = [_HEADER.format(port=port)]
     for hs in config.get("handsets", []):
         ep = (hs.get("endpoint") or "").strip()
         if not ep:

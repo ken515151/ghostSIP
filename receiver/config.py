@@ -32,6 +32,13 @@ DEFAULTS: dict[str, Any] = {
         "username": "ghostsip",
         "password": "",
     },
+    "sip": {
+        # UDP port the phones register to. Non-standard on purpose: 5060
+        # attracts constant internet-wide scanning, and moving off it removes
+        # ~99% of that noise. Must match each phone's server port and the
+        # firewall rule (docs/deployment.md).
+        "port": 5560,
+    },
     "ghost": {
         "ring_seconds": 4,
         "dedup_window_seconds": 120,
@@ -53,6 +60,15 @@ DEFAULTS: dict[str, Any] = {
         "server": "sip.voipstudio.com",
         "username": "",
         "password": "",
+    },
+    "pushover": {
+        # When enabled, repeated failed SIP registrations ALWAYS send a
+        # high-priority push (the brute-force tripwire — see alerts.py).
+        "enabled": False,
+        "user_key": "",
+        "app_token": "",
+        # Optional: normal-priority push when the receiver logs an ERROR.
+        "alert_on_errors": False,
     },
     # Each: {"name": free text, "endpoint": pjsip name, "password": SIP secret}
     "handsets": [],

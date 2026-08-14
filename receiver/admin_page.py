@@ -121,6 +121,12 @@ ADMIN_HTML = r"""<!doctype html>
     </div>
 
     <div class="panel">
+      <h2>SIP listener</h2>
+      <p class="hint">UDP port the phones register to. Non-standard by default (5560) — port 5060 attracts constant internet scanning. Must match each phone's server port and the firewall rule; after changing it, Save then restart the stack (<code>docker compose restart</code>).</p>
+      <div class="field"><label>SIP port</label><input type="number" id="sip_port" min="1024" max="65535"></div>
+    </div>
+
+    <div class="panel">
       <h2>Ghost-call behaviour</h2>
       <div class="field"><label>Ring time (seconds)</label><input type="number" id="ghost_ring_seconds" min="1" max="20"></div>
       <div class="field"><label>Dedup window (seconds)</label><input type="number" id="ghost_dedup_window_seconds" min="0" max="600"></div>
@@ -131,6 +137,19 @@ ADMIN_HTML = r"""<!doctype html>
         <div class="toggle"><input type="checkbox" id="ghost_include_user_context"><span class="sub">On = also inject for missed direct (User-context) calls, not just ring-group. See docs/decisions.md.</span></div></div>
       <div class="field"><label>Debug: log full payloads</label>
         <div class="toggle"><input type="checkbox" id="ghost_debug_log_payloads"><span class="sub">Commissioning aid (test A): logs raw webhook JSON including caller numbers. Turn OFF in normal use — numbers are otherwise masked to their last 5 digits.</span></div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Pushover alerts</h2>
+      <p class="hint">Push notifications via <a href="https://pushover.net" target="_blank" rel="noopener">pushover.net</a> (user key from your dashboard; create an Application there for the API token). When enabled, repeated failed SIP registrations always send a <b>high-priority</b> alert — the brute-force tripwire.</p>
+      <div class="field"><label>Enabled</label>
+        <div class="toggle"><input type="checkbox" id="pushover_enabled"></div></div>
+      <div class="field"><label>User key</label><input type="text" id="pushover_user_key"></div>
+      <div class="field"><label>API token</label><input type="password" id="pushover_app_token"></div>
+      <div class="field"><label>Also alert on app errors</label>
+        <div class="toggle"><input type="checkbox" id="pushover_alert_on_errors"><span class="sub">Normal-priority push when the receiver logs an ERROR (rate-limited to one per 15 min).</span></div></div>
+      <div class="row"><button class="ghost" id="pushover-test">Send test alert</button>
+        <span class="sub">Save first — the test uses the saved keys.</span></div>
     </div>
   </section>
 
@@ -232,12 +251,17 @@ function fill(){
   trunkback_server.value=c.trunkback.server||"";
   trunkback_username.value=c.trunkback.username||"";
   trunkback_password.value=c.trunkback.password==="__SET__"?"__SET__":(c.trunkback.password||"");
+  sip_port.value=c.sip.port;
   ghost_ring_seconds.value=c.ghost.ring_seconds;
   ghost_dedup_window_seconds.value=c.ghost.dedup_window_seconds;
   ghost_alert_info.value=c.ghost.alert_info||"";
   ghost_caller_name_prefix.value=c.ghost.caller_name_prefix||"";
   ghost_include_user_context.checked=!!c.ghost.include_user_context;
   ghost_debug_log_payloads.checked=!!c.ghost.debug_log_payloads;
+  pushover_enabled.checked=!!c.pushover.enabled;
+  pushover_user_key.value=c.pushover.user_key||"";
+  pushover_app_token.value=c.pushover.app_token==="__SET__"?"__SET__":(c.pushover.app_token||"");
+  pushover_alert_on_errors.checked=!!c.pushover.alert_on_errors;
   renderHandsets();
 }
 function escAttr(s){return (s||"").replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));}
@@ -276,12 +300,17 @@ function collect(){
   CONFIG.trunkback.server=trunkback_server.value.trim();
   CONFIG.trunkback.username=trunkback_username.value.trim();
   CONFIG.trunkback.password=trunkback_password.value;
+  CONFIG.sip.port=+sip_port.value;
   CONFIG.ghost.ring_seconds=+ghost_ring_seconds.value;
   CONFIG.ghost.dedup_window_seconds=+ghost_dedup_window_seconds.value;
   CONFIG.ghost.alert_info=ghost_alert_info.value.trim();
   CONFIG.ghost.caller_name_prefix=ghost_caller_name_prefix.value.trim();
   CONFIG.ghost.include_user_context=ghost_include_user_context.checked;
   CONFIG.ghost.debug_log_payloads=ghost_debug_log_payloads.checked;
+  CONFIG.pushover.enabled=pushover_enabled.checked;
+  CONFIG.pushover.user_key=pushover_user_key.value.trim();
+  CONFIG.pushover.app_token=pushover_app_token.value;
+  CONFIG.pushover.alert_on_errors=pushover_alert_on_errors.checked;
 }
 $("#save").onclick=async()=>{
   collect();
@@ -298,6 +327,10 @@ $("#reload").onclick=async()=>{
     const r=await api("/admin/reload-asterisk",{method:"POST"});
     toast("Asterisk reloaded: "+r.detail, r.ok?"ok":"err");
   }catch(e){toast("Reload failed: "+e.message,"err");}
+};
+$("#pushover-test").onclick=async()=>{
+  try{ await api("/admin/test-pushover",{method:"POST"}); toast("Test alert sent — check your phone","ok"); }
+  catch(e){ toast("Test failed: "+e.message,"err"); }
 };
 $("#refresh-preview").onclick=refreshPreview;
 async function refreshPreview(){

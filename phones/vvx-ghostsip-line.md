@@ -16,7 +16,8 @@ Do this per handset. The `endpoint`/username and password come from the
    - **Address (SIP User):** the endpoint name from the panel (e.g. `phone1`)
    - **Auth User ID:** same endpoint name
    - **Auth Password:** the SIP password from the panel
-   - **Server / Registrar (SIP.1):** the GhostSIP VPS host, port `5060` (UDP)
+   - **Server / Registrar (SIP.1):** the GhostSIP VPS host, port `5560` (UDP)
+     — the panel's "SIP port" setting, deliberately not 5060
    - **Register:** enabled; a sensible expiry (e.g. 300 s)
 3. **Keep the VoIPstudio line as the primary/default outbound line** so normal
    dialling is unaffected. GhostSIP is inbound-ghost + tap-to-callback only.
@@ -32,7 +33,7 @@ reg.N.label              = GhostSIP
 reg.N.auth.userId        = <endpoint>
 reg.N.auth.password      = <sip-password-from-panel>
 reg.N.server.1.address   = <ghostsip-vps-host>
-reg.N.server.1.port      = 5060
+reg.N.server.1.port      = 5560
 reg.N.server.1.transport = UDPonly
 reg.N.server.1.expires   = 300
 ```

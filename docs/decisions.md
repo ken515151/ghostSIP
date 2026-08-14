@@ -83,15 +83,32 @@ test A shrinks to verifying the abandoned-call specifics — see
 - **Fact established 14 Aug 2026:** no phone location (shop included, most
   likely) has a static IP, so the spec's "allowlist SIP to the shop's static
   IP" isn't available. SIP listens openly.
-- **Compensating controls** (docs/deployment.md §7): UK-national-only
+- **Compensating controls** (docs/deployment.md): UK-national-only
   dialplan (international premium fraud unroutable even with a stolen
   credential), VoIPstudio-side call barring on the trunk seat, generated
-  24-byte SIP secrets, fail2ban, optional non-standard SIP port.
+  24-byte SIP secrets, fail2ban, and a non-standard SIP port (5560 by
+  default — decided 14 Aug 2026; GUI-configurable, kills ~99% of scanner
+  noise; a port change needs the ufw rule and every phone's server port
+  updated to match, then a stack restart).
 - **Accepted residual risk:** a stolen phone credential could make UK-rate
   calls billed to the shop until noticed — bounded by fail2ban and the
   trunk seat's own limits.
 - **Change it:** if any site gains a static IP, add a ufw allowlist rule for
   it; the rest of the layers stay.
+
+## Alerting — Pushover
+
+- **Default:** off until keys are entered in the panel (Settings → Pushover
+  alerts). Once enabled, a **high-priority** push fires when ≥5 failed SIP
+  auth/registration attempts land within 10 minutes (the receiver tails
+  Asterisk's security log — same container, so it's just a file). At most
+  one brute-force alert per hour. Optional second toggle: normal-priority
+  push when the receiver logs an ERROR, max one per 15 minutes.
+- **Why:** with SIP open to the internet and no source-IP allowlist, the
+  brute-force tripwire is the "someone is guessing passwords" signal;
+  fail2ban does the banning, Pushover does the telling-Ken.
+- **Change it:** thresholds/cooldowns are constants at the top of
+  receiver/alerts.py.
 
 ## Reload mechanism for Asterisk
 

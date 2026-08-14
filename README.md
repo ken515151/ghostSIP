@@ -29,6 +29,7 @@ You do **not** hand-edit config files in normal operation. After deploying (see
 - **Handsets** — add a VVX, auto-generate its SIP secret; the panel writes
   Asterisk's `pjsip.conf` and reloads it for you.
 - **Logs & Errors** — live log stream with error highlighting for fault-finding.
+- **Pushover alerts** — high-priority push on SIP brute-force attempts; optional push on app errors.
 - **pjsip.conf** — read-only preview of what the panel generates.
 
 The only hand-edited file is the bootstrap `.env` at the repo root (domain,

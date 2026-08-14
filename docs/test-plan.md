@@ -45,7 +45,8 @@ one answered call → zero.
 the VVX actually logs the missed call (the whole point — spec §2).
 
 1. Configure one handset in the admin panel; Save + Reload Asterisk.
-2. On the VPS: `sudo tcpdump -i any -w /tmp/ghost.pcap udp port 5060` (or
+2. On the VPS: `sudo tcpdump -i any -w /tmp/ghost.pcap udp port 5560` (the
+   panel's SIP port — default 5560) (or
    `pjsip set logger on` in the Asterisk console).
 3. Trigger a ghost call. Either abandon a real ring-group call, or originate
    manually:
