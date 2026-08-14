@@ -41,9 +41,25 @@ Gather these first; every later stage assumes them.
    - **A dedicated IPv4 address** (standard on the providers above — avoid
      any "IPv6-only" or "NAT VPS" budget tier)
    - Turn on the provider's **automated snapshot/backup** add-on (~£1/mo).
-2. **A DNS name for the webhook** — create an `A` record at your DNS host,
-   e.g. `ghostsip.yourdomain.co.uk` → the VPS IP, once you know the IP
-   (stage 1). Caddy can't fetch its TLS certificate until this resolves.
+2. **A DNS name for the webhook** — a subdomain of a domain you own, e.g.
+   `ghostsip.yourdomain.co.uk`. You'll create one `A` record pointing it at
+   the VPS IP (stage 1), at whatever service manages that domain's DNS —
+   your registrar's control panel, or cPanel → Zone Editor if the domain is
+   on Krystal/shared hosting. **This is NOT set in the VPS panel** and has
+   nothing to do with the long auto-generated hostname the VPS came with;
+   that hostname is just a label for the IP and should not be used here
+   (it ties you to the provider and can hit shared certificate limits).
+
+   > **DNS propagation takes time.** A brand-new record, or one on a domain
+   > whose nameservers you've just changed, can take anywhere from a few
+   > minutes to a few hours (occasionally up to 24–48 h) to be visible
+   > everywhere. Create the record as early as possible — ideally right
+   > after stage 1 when you know the IP — so it has propagated by the time
+   > you reach stage 6. Caddy cannot fetch the TLS certificate until the
+   > name resolves to the VPS from the public internet. Check progress with
+   > `nslookup ghostsip.yourdomain.co.uk` (from your PC) or
+   > [dnschecker.org](https://dnschecker.org); when it returns the VPS IP,
+   > you're good.
 3. **A dedicated VoIPstudio "trunk-back" seat** — an ordinary extra user/seat
    on the VoIPstudio account whose **SIP username, password and registrar**
    you can read in the dashboard (the same details you used to configure the
@@ -161,7 +177,23 @@ chmod 600 .env
 These are the **only** hand-edited settings in the whole system. Everything
 else is configured in the admin.
 
-**Check:** `cat .env` shows all three values filled in, no placeholders left.
+> **Save these passwords somewhere safe now** — a password manager
+> (Bitwarden, 1Password, KeePass) is ideal. Record: the **admin password**
+> (you log in with it), the **ARI password**, and later the **VoIPstudio
+> trunk seat** and **handset SIP secrets** the admin generates. Nothing here
+> can be "recovered" if lost — the admin password can be reset by editing
+> `.env` and restarting, but the others just have to be regenerated and
+> re-entered everywhere. A moment saving them now avoids that.
+
+> **Where `.env` lives:** the default location this guide uses is
+> `/opt/ghostsip/.env` on the VPS (because you cloned the repo to
+> `/opt/ghostsip`). That's the single file to keep alongside your backups
+> (see *Backup and restore*), and the file to edit if you ever change the
+> admin password. It is `chmod 600` and git-ignored, so it never leaves the
+> server on its own.
+
+**Check:** `cat /opt/ghostsip/.env` shows all three values filled in, no
+placeholders left.
 
 ## 5. Firewall
 
@@ -200,10 +232,19 @@ asserted in Asterisk: active=False`.
 **Check (public side)**, from your own PC's browser:
 
 - `https://YOUR_DOMAIN/healthz` → `{"ok": true}` with a valid padlock.
-  (Hangs or certificate errors = the DNS record isn't resolving to the VPS
-  yet; give it time and `docker compose restart caddy`.)
 - `https://YOUR_DOMAIN/admin` → **404 — this is correct.** The public domain
   serves only the webhook; the admin is deliberately not on the internet.
+
+> **If healthz hangs or shows a certificate error, it's almost always DNS,
+> not GhostSIP.** Caddy can only get the certificate once your domain
+> resolves to the VPS from the public internet (stage 0). Confirm with
+> `nslookup YOUR_DOMAIN` from your PC — if it doesn't return the VPS IP yet,
+> the record simply hasn't propagated; wait and re-check (it can take minutes
+> to hours). The GhostSIP containers are already up and healthy regardless —
+> you can watch the certificate attempts with `docker compose logs -f caddy`,
+> and once DNS resolves Caddy retries on its own (or nudge it with
+> `docker compose restart caddy`). Meanwhile the admin (below) works
+> immediately over the SSH tunnel — it doesn't depend on DNS at all.
 
 **Check (admin side)**, the SSH tunnel — from your PC:
 
