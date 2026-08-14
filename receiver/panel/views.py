@@ -83,9 +83,13 @@ def webhook(request: HttpRequest) -> HttpResponse:
         # Per-leg artifact ("answered elsewhere", or one leg giving up while
         # others still ring) — not an abandoned call.
         return JsonResponse({"action": "ignored", "reason": "not final (per-leg event)"})
-    # The spec expected a queue discriminator (context: Queue) from the docs;
-    # QT's captures never showed one, so an absent field is allowed through.
-    if context is not None and context != "Queue" and not config.include_user_context:
+    # Ring-group discriminator, settled by the live test-A capture (14 Aug
+    # 2026): VoIPstudio sends context "RG-<id>" for ring-group calls — the
+    # docs' promised "Queue" never appeared (wrong about payload fields
+    # again). Absent context is allowed through; anything else is treated
+    # as a direct call and injected only when the toggle says so.
+    is_ring_group = context is None or context == "Queue" or str(context).startswith("RG-")
+    if not is_ring_group and not config.include_user_context:
         return JsonResponse({"action": "ignored", "reason": f"context {context!r}"})
     if not caller:
         Event.log(Event.INFO, "webhook", "Missed call with no usable caller number (withheld?)")

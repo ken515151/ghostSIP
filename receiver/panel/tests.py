@@ -79,6 +79,9 @@ class WebhookTests(TestCase):
 
     @patch("panel.views.ari.originate_ghost_call", return_value=(True, "ok"))
     def test_context_filter(self, originate):
+        # Real capture (test A): ring-group context is "RG-<id>", not "Queue"
+        r = self.post(_missed(root=299, context="RG-83502"))
+        self.assertEqual(r.json()["action"], "injected")
         r = self.post(_missed(root=300, context="User"))
         self.assertIn("context", r.json()["reason"])
         config = Configuration.load()

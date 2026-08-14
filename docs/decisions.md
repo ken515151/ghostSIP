@@ -23,9 +23,15 @@ test A shrinks to verifying the abandoned-call specifics — see
 
 ## Include missed *direct* calls, or only ring-group?
 
-- **Default:** ring-group / queue only, *if* the payload distinguishes them.
-  The spec expected `context: "Queue"` (from the docs); QT's captures never
-  showed a context field, so the receiver filters on it only when present.
+- **Default:** ring-group only. **Settled by the live test-A capture
+  (14 Aug 2026):** VoIPstudio sends `context: "RG-<id>"` (e.g. `RG-83502`)
+  for ring-group calls — not the `"Queue"` their docs claimed (wrong about
+  payload fields again). The filter accepts the `RG-` prefix, `Queue` (in
+  case it ever appears) or an absent field. The same capture confirmed
+  `final: true`, `terminated_by: "caller"`, per-leg `call_id` vs
+  `root_call_id`, bare-44 `src`, and the CLI display-name prepend format
+  `"TechRescue | <number>"` (so the admin's caller-name prefix should be
+  set to `TechRescue |` to match).
 - **Why:** the diagnosed defect (spec §2) is specifically the
   `SIP;cause=200` sent on abandoned ring-group calls. Direct calls to a single
   extension generally log their own missed call already, so injecting there
