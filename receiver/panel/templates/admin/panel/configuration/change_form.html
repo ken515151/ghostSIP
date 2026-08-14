@@ -4,6 +4,9 @@
 {# OUTSIDE the main change form, so these small POST forms don't nest.     #}
 {% block object-tools-items %}
   <li>
+    <a href="{% url 'admin:panel_status' %}" class="button">System status</a>
+  </li>
+  <li>
     {% if original.lockdown_active %}
       <form method="post" action="{% url 'admin:panel_lockdown_lift' %}" style="display:inline">
         {% csrf_token %}<button type="submit" class="button">Lift lockdown</button>

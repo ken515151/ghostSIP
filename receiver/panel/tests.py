@@ -231,6 +231,47 @@ class WatcherLogicTests(TestCase):
         self.assertTrue(KnownAddress.objects.filter(endpoint="phone1").exists())
 
 
+class StatusPageTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+        self.user = User.objects.create_superuser("admin", password="x" * 16)
+        self.client.force_login(self.user)
+
+    @patch("panel.admin.status_svc.public_check")
+    @patch("panel.admin.status_svc.asterisk_status")
+    def test_status_page_renders(self, ast, pub):
+        ast.return_value = [("Trunk registration (VoIPstudio)",
+                             "pjsip show registrations", "Registered")]
+        pub.return_value = {"domain": "ghostsip.example.com", "dns_ip": "203.0.113.5",
+                            "cert_ok": True, "cert_issuer": "Let's Encrypt",
+                            "cert_expires": timezone.now() + timedelta(days=60),
+                            "cert_days_left": 60, "healthz_ok": True, "error": ""}
+        r = self.client.get("/admin/panel/configuration/status/")
+        self.assertEqual(r.status_code, 200)
+        for fragment in ["System status", "Registered", "Encrypt",
+                         "reachable over HTTPS", "203.0.113.5"]:
+            self.assertContains(r, fragment)
+
+    @patch("panel.admin.status_svc.public_check")
+    @patch("panel.admin.status_svc.asterisk_status")
+    def test_status_page_shows_failures(self, ast, pub):
+        ast.return_value = [("Phone endpoints", "pjsip show endpoints", "(no output)")]
+        pub.return_value = {"domain": "ghostsip.example.com", "dns_ip": None,
+                            "cert_ok": False, "cert_issuer": "", "cert_expires": None,
+                            "cert_days_left": None, "healthz_ok": False,
+                            "error": "DNS lookup failed: no such host"}
+        r = self.client.get("/admin/panel/configuration/status/")
+        self.assertContains(r, "not valid")
+        self.assertContains(r, "DNS lookup failed")
+
+    def test_status_requires_login(self):
+        self.client.logout()
+        r = self.client.get("/admin/panel/configuration/status/")
+        self.assertEqual(r.status_code, 302)  # bounced to the login page
+
+
 class DedupHousekeepingTests(TestCase):
     def test_old_rows_pruned(self):
         from panel.management.commands.watch_security_log import Command

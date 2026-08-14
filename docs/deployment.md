@@ -460,6 +460,7 @@ followed you via DNS).
 
 | Symptom | Where to look |
 |---|---|
+| Anything at all | Admin → Configuration → **System status** (top-right button): live trunk registration, phone endpoint states, and a real TLS + DNS + webhook reachability check with certificate expiry — most questions answer themselves there. |
 | No missed call appeared on the phones | Admin → **Events**: did the webhook arrive? Did injection run? Any `Originate FAILED`? Work backwards from the first missing step. |
 | Webhook never arrives | `https://YOUR_DOMAIN/healthz` from outside (Caddy/DNS ok?); credentials in the VoIPstudio webhook URL match Configuration → Webhook? Events shows `Webhook auth failed` if not. |
 | Phone won't register | `docker compose exec ghostsip asterisk -rx "pjsip show endpoints"`; port 5560/UDP in the phone config and ufw; endpoint name and password match the Handsets page; after handset changes, was **Reload Asterisk** pressed? |

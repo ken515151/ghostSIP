@@ -7,11 +7,13 @@ from __future__ import annotations
 
 from django.contrib import admin, messages
 from django.http import HttpResponseRedirect
+from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils import timezone
 
 from panel.models import Configuration, Event, Handset, KnownAddress
 from panel.services import alerts, ari, lockdown, pjsip
+from panel.services import status as status_svc
 
 
 def _regenerate_pjsip(request) -> None:
@@ -81,6 +83,7 @@ class ConfigurationAdmin(admin.ModelAdmin):
             path("lockdown/suspend/", wrap(self.suspend_view), name="panel_lockdown_suspend"),
             path("reload-asterisk/", wrap(self.reload_view), name="panel_reload_asterisk"),
             path("test-pushover/", wrap(self.test_pushover_view), name="panel_test_pushover"),
+            path("status/", wrap(self.status_view), name="panel_status"),
         ]
         return extra + super().get_urls()
 
@@ -111,6 +114,18 @@ class ConfigurationAdmin(admin.ModelAdmin):
             messages.info(request, "Auto-lockdown suspended for 1 hour. "
                                    "New-address alerts still send.")
         return self._back()
+
+    def status_view(self, request):
+        """Read-only live status: Asterisk registrations/endpoints and the
+        public webhook + TLS certificate check."""
+        context = {
+            **self.admin_site.each_context(request),
+            "title": "System status",
+            "opts": self.model._meta,
+            "asterisk": status_svc.asterisk_status(),
+            "public": status_svc.public_check(),
+        }
+        return TemplateResponse(request, "admin/panel/status.html", context)
 
     def test_pushover_view(self, request):
         if request.method == "POST":

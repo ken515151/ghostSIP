@@ -1,0 +1,49 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label='panel' %}">GhostSIP</a>
+  &rsaquo; System status
+</div>
+{% endblock %}
+
+{% block content %}
+<h1>System status</h1>
+<p style="color: var(--body-quiet-color)">Live checks, run as this page loads.
+Refresh the page to re-run them.</p>
+
+<div class="module" style="margin-bottom: 16px">
+  <h2>Public webhook &amp; certificate — {{ public.domain|default:"(no domain set)" }}</h2>
+  <table style="width:100%">
+    <tr><th style="width:220px">DNS resolves to</th>
+        <td>{{ public.dns_ip|default:"—" }}</td></tr>
+    <tr><th>TLS certificate</th>
+        <td>
+          {% if public.cert_ok %}
+            <b style="color:#1c6b45">valid</b> — issued by {{ public.cert_issuer }},
+            expires {{ public.cert_expires|date:"j M Y" }}
+            ({{ public.cert_days_left }} days left
+            {% if public.cert_days_left < 21 %}— Caddy should renew it
+            automatically around 30 days; if this keeps dropping, check
+            <code>docker compose logs caddy</code>{% endif %})
+          {% else %}
+            <b style="color:#ba2121">not valid</b>
+          {% endif %}
+        </td></tr>
+    <tr><th>Webhook endpoint (/healthz)</th>
+        <td>{% if public.healthz_ok %}<b style="color:#1c6b45">reachable over HTTPS</b>
+            {% else %}<b style="color:#ba2121">not reachable</b>{% endif %}</td></tr>
+    {% if public.error %}
+    <tr><th>Detail</th><td><code>{{ public.error }}</code></td></tr>
+    {% endif %}
+  </table>
+</div>
+
+{% for title, cmd, text in asterisk %}
+<div class="module" style="margin-bottom: 16px">
+  <h2>{{ title }} &nbsp;<small><code>asterisk -rx "{{ cmd }}"</code></small></h2>
+  <pre style="padding: 10px 12px; margin: 0; overflow-x: auto">{{ text }}</pre>
+</div>
+{% endfor %}
+{% endblock %}
