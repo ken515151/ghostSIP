@@ -1,0 +1,41 @@
+# GhostSIP stack: one container with Asterisk + receiver/admin panel, one
+# with Caddy for TLS. Both use host networking on purpose:
+#   - SIP/RTP behaves exactly as on bare metal (no NAT through docker-proxy,
+#     no RTP port-mapping cost, no one-way-audio surprises)
+#   - Docker never punches iptables holes around ufw — the host firewall
+#     stays authoritative (docs/deployment.md §firewall)
+# Loopback is shared with the host, so ARI (127.0.0.1:8088) and the receiver
+# (127.0.0.1:8100) are reachable by Caddy but never from outside.
+#
+# Bootstrap secrets come from .env (copy deploy/.env.example).
+services:
+  ghostsip:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    container_name: ghostsip
+    network_mode: host
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      GHOSTSIP_CONFIG: /etc/ghostsip/config.json
+      GHOSTSIP_PJSIP_PATH: /etc/ghostsip/pjsip.conf
+      # Same container as Asterisk, so no sudo needed.
+      GHOSTSIP_ASTERISK_RELOAD_CMD: asterisk -rx 'pjsip reload'
+    volumes:
+      # config.json + generated pjsip.conf — THE state to back up
+      - ./data/ghostsip:/etc/ghostsip
+      # messages/security logs surfaced for host fail2ban
+      - ./data/asterisk-logs:/var/log/asterisk
+
+  caddy:
+    image: caddy:2
+    container_name: ghostsip-caddy
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      GHOSTSIP_DOMAIN: ${GHOSTSIP_DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy-data:/data
+      - ./data/caddy-config:/config

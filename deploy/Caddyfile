@@ -1,0 +1,7 @@
+# GhostSIP — TLS termination. Caddy fetches and renews the Let's Encrypt
+# certificate automatically for the domain set in .env, and proxies to the
+# receiver on loopback. Ports 80+443 must be open in ufw (80 is needed for
+# the ACME challenge and redirects to https).
+{$GHOSTSIP_DOMAIN} {
+    reverse_proxy 127.0.0.1:8100
+}

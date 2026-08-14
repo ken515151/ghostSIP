@@ -1,2 +1,9 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Files that run on Linux must stay LF even when checked out on Windows
+*.sh text eol=lf
+Dockerfile text eol=lf
+Caddyfile text eol=lf
+*.conf text eol=lf
+*.yml text eol=lf

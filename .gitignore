@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Secrets / runtime config — never commit
+receiver/.env
+*.env
+!.env.example
+config.json
+
+# Docker runtime state (config volume, TLS certs, asterisk logs)
+data/
+
+# Captures
+*.pcap
