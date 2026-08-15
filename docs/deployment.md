@@ -289,14 +289,19 @@ logpath   = /opt/ghostsip/data/asterisk-logs/messages
             /opt/ghostsip/data/asterisk-logs/security
 maxretry  = 5
 findtime  = 10m
-bantime   = 1h
+bantime   = 24h
+; Escalate: each repeat offence multiplies the ban (24h → 48h → 96h …),
+; capped at 4 weeks. A first mistake costs a day; a persistent scanner
+; earns itself a month.
+bantime.increment = true
+bantime.maxtime   = 4w
 ; Ban on ALL ports. The stock asterisk jail assumes SIP on 5060/5061, so
 ; its bans would miss our port entirely (found the hard way: a "banned" IP
 ; kept registering on 5560). Allports also survives changing the SIP port.
 banaction = %(banaction_allports)s
 ; Trusted phone sites — NEVER ban these. Phones share their site's public
 ; IP, so one mis-registering phone could otherwise lock out every phone at
-; that location for an hour. Space-separated; keep loopback entries.
+; that location for the whole ban. Space-separated; keep loopback entries.
 ignoreip  = 127.0.0.1/8 ::1 YOUR_SHOP_PUBLIC_IP
 EOF
 systemctl restart fail2ban
@@ -304,6 +309,10 @@ systemctl restart fail2ban
 
 **Check:** `fail2ban-client status asterisk` shows the jail live with both
 log paths.
+
+> Escalating bans need fail2ban to remember offenders across restarts,
+> which it does by default (its own SQLite db at
+> `/var/lib/fail2ban/fail2ban.sqlite3`) — nothing extra to set up.
 
 Useful later: `fail2ban-client status asterisk` lists currently banned IPs;
 `fail2ban-client set asterisk unbanip SOME_IP` frees one immediately. If a
