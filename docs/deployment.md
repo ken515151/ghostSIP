@@ -125,6 +125,11 @@ systemctl restart ssh
 **Check:** `ssh root@YOUR_VPS_IP` still works from your PC; from anywhere
 without your key it's refused.
 
+> **Locked out later?** If you ever lose this key, you are not stuck — the
+> provider's web console is a separate door that still works. See
+> *Recovering access if you lose your SSH key* near the end of this guide.
+> Consider enrolling a second device's key now so it never comes to that.
+
 ## 3. Install Docker
 
 Docker's official repository (Ubuntu's own packaging is older):
@@ -456,6 +461,58 @@ contain the SIP and webhook secrets in plaintext.
 `.env` and `data/ghostsip/` back into place → `docker compose up -d --build`.
 Phones re-register on their own; VoIPstudio needs nothing (the domain
 followed you via DNS).
+
+## Recovering access if you lose your SSH key
+
+Key-only SSH (stage 2) means a lost or wiped key would normally lock you
+out — **but you are never actually locked out**, because the VPS provider's
+**web console** is a completely separate door that doesn't use SSH at all.
+Read this now, before you need it; once you're locked out you can't open
+this file on the server.
+
+> **The system keeps running the whole time.** SSH only gates
+> *administration*. Phones keep getting missed-call injections and callbacks
+> while you sort access out — so this is never an emergency, fix it at
+> leisure.
+
+**Recovery steps (Krystal panel → your VPS → Console):**
+
+1. Open the **web console / VNC** for the VPS in the Krystal control panel
+   and log in as `root`.
+   - If the root password was never set or you've forgotten it, most panels
+     have a **"reset root password"** button; use it, then log in. The
+     console is not governed by `sshd_config`, so `PasswordAuthentication no`
+     does not block it.
+2. On the **new machine** you want to use, create a fresh key and copy its
+   public half:
+   ```powershell
+   ssh-keygen -t ed25519
+   type $env:USERPROFILE\.ssh\id_ed25519.pub
+   ```
+3. In the console, add that key and remove the lost one:
+   ```bash
+   nano ~/.ssh/authorized_keys
+   ```
+   Paste the new public key on its own line; delete the line for the lost
+   key (dead weight, and a liability if the old key was stolen rather than
+   just lost). Save, then:
+   ```bash
+   chmod 600 ~/.ssh/authorized_keys
+   ```
+4. From the new machine, confirm `ssh root@YOUR_VPS_IP` logs in with the new
+   key.
+
+**Make future-you's life easier — enrol a second key today.** Add a key from
+a second device (another PC, or a phone with an SSH app) to
+`~/.ssh/authorized_keys` now, one per line. Then losing one key isn't even a
+console trip — you SSH in from the other device and add a replacement. Also
+put a **passphrase** on each key: a stolen key file is then useless without
+it, so "lost" and "stolen" become the same low-severity event.
+
+**What the console can NOT recover:** the server itself. If the VPS is
+destroyed, the console goes with it — that is what the off-box backup
+(`data/ghostsip/` + `.env`) and the provider snapshots above are for. Keys
+are cheap to reissue; the database and secrets are the irreplaceable part.
 
 ## Troubleshooting
 
