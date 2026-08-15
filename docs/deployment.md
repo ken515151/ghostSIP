@@ -208,7 +208,7 @@ ufw allow 80/tcp            # ACME certificate challenge + HTTPS redirect
 ufw allow 443/tcp           # the webhook
 ufw allow 5560/udp          # SIP — non-standard on purpose; must match the
                             # admin's "SIP port" setting (default 5560)
-ufw allow 10000:20000/udp   # RTP audio (matches asterisk/rtp.conf)
+ufw allow 10000:10500/udp   # RTP audio for callbacks (matches asterisk/rtp.conf)
 ufw default deny incoming
 ufw enable                  # answer y
 ```
