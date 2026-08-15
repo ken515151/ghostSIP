@@ -42,6 +42,13 @@ type=aor
 max_contacts=1
 remove_existing=yes
 qualify_frequency=60
+; Cap the granted registration to 2 min regardless of what the phone asks
+; for (Polycom defaults to 3600). This is what lets a phone re-register on
+; its own within ~2 min after a container rebuild wipes Asterisk's
+; in-memory registrations, instead of waiting out its full lease.
+maximum_expiration=120
+minimum_expiration=60
+default_expiration=120
 """
 
 _HANDSET_TPL = """

@@ -35,8 +35,15 @@ reg.N.auth.password      = <sip-password-from-panel>
 reg.N.server.1.address   = <ghostsip-vps-host>
 reg.N.server.1.port      = 5560
 reg.N.server.1.transport = UDPonly
-reg.N.server.1.expires   = 300
+reg.N.server.1.expires   = 120
 ```
+
+> **Registration expiry.** Whatever the phone requests here, the server caps
+> the granted lease at 120 s (`maximum_expiration` on the AOR), so the phone
+> re-registers roughly every two minutes and recovers on its own within ~2
+> min of any server rebuild. If you configure via the web UI and can't find
+> this field, don't worry — the server-side cap makes the phone refresh
+> quickly regardless of the phone's own setting.
 
 ## Verify
 

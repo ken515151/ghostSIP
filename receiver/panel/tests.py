@@ -163,6 +163,7 @@ class PjsipTests(TestCase):
         self.assertIn("[phone1](vvx-endpoint)", text)
         self.assertIn("password=s3cret", text)
         self.assertIn("client_uri=sip:trunk1@sip.voipstudio.com", text)
+        self.assertIn("maximum_expiration=120", text)  # fast re-register after rebuild
 
     def test_no_trunk_section_without_username(self):
         text = pjsip.render(Configuration.load(), [])

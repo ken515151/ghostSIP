@@ -465,6 +465,7 @@ followed you via DNS).
 | No missed call appeared on the phones | Admin → **Events**: did the webhook arrive? Did injection run? Any `Originate FAILED`? Work backwards from the first missing step. |
 | Webhook never arrives | `https://YOUR_DOMAIN/healthz` from outside (Caddy/DNS ok?); credentials in the VoIPstudio webhook URL match Configuration → Webhook? Events shows `Webhook auth failed` if not. |
 | Phone won't register | `docker compose exec ghostsip asterisk -rx "pjsip show endpoints"`; port 5560/UDP in the phone config and ufw; endpoint name and password match the Handsets page; after handset changes, was **Reload Asterisk** pressed? |
+| Phone stays "Unavailable" for a while after a rebuild | Normal, but should self-recover within ~2 min (the server caps registration to 120 s). If a phone was registered before the fix that introduced this cap, it still holds its old long lease — reboot it once (or toggle its line) so it re-registers under the new cap; every rebuild after that recovers on its own. Check the granted lease with `docker compose exec ghostsip asterisk -rx "pjsip show contacts"` (RegExpiry column). |
 | Trunk not registered | `... "pjsip show registrations"`; seat credentials in Configuration; VoIPstudio dashboard shows the seat offline? |
 | Callback doesn't ring out | Is **lockdown** engaged (Configuration page shows status)? Trunk registered? The dialplan only routes UK national numbers (0…) by design. |
 | Container won't start | `docker compose logs ghostsip` — the entrypoint names any missing `.env` variable explicitly. |
