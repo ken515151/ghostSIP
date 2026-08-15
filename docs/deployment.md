@@ -63,8 +63,14 @@ Gather these first; every later stage assumes them.
 3. **A dedicated VoIPstudio "trunk-back" seat** — an ordinary extra user/seat
    on the VoIPstudio account whose **SIP username, password and registrar**
    you can read in the dashboard (the same details you used to configure the
-   VVXes manually). While in the dashboard, set **international call
-   barring** on that seat — it's one of the anti-fraud layers.
+   VVXes manually). Two settings to make on that seat in the dashboard:
+   - **Outbound caller ID** → set it to the shop's main published number.
+     GhostSIP deliberately doesn't set caller ID (it lets VoIPstudio present
+     the seat's own CLI), so if this is left blank the seat presents
+     *nothing* and every callback shows the customer "withheld". VoIPstudio
+     only lets a seat present a number the account is authorised for (Ofcom
+     CLI rules).
+   - **International call barring** → on. One of the anti-fraud layers.
 4. **A Pushover account** (optional but recommended, ~one-off $5 mobile
    licence) — note your **User Key**, and create an *Application* called
    GhostSIP to get an **API Token**.
@@ -534,6 +540,7 @@ are cheap to reissue; the database and secrets are the irreplaceable part.
 | Phone stays "Unavailable" for a while after a rebuild | Normal, but should self-recover within ~2 min (the server caps registration to 120 s). If a phone was registered before the fix that introduced this cap, it still holds its old long lease — reboot it once (or toggle its line) so it re-registers under the new cap; every rebuild after that recovers on its own. To confirm the cap is applied: `pjsip set logger on`, watch a REGISTER in `docker compose logs -f ghostsip`, and check the `200 OK`'s `Contact:` header ends with `;expires=120` (the phone may request 3600; Asterisk granting 120 is the proof). `pjsip set logger off` when done. |
 | Trunk not registered | `... "pjsip show registrations"`; seat credentials in Configuration; VoIPstudio dashboard shows the seat offline? |
 | Callback doesn't ring out | Is **lockdown** engaged (Configuration page shows status)? Trunk registered? The dialplan only routes UK national numbers (0…) by design. |
+| Callback shows the customer no caller ID / "withheld" | Set the trunk-back seat's **outbound caller ID** to the shop's main number in the VoIPstudio dashboard (stage 0). GhostSIP doesn't set CLI by design; a seat with no outbound CLI presents nothing. Not a GhostSIP fault. |
 | Container won't start | `docker compose logs ghostsip` — the entrypoint names any missing `.env` variable explicitly. |
 | Live SIP debugging | `docker compose exec ghostsip asterisk -rvvv`, then `pjsip set logger on` (`pjsip set logger off` when done). |
 | Locked out of admin (django-axes) | wait 10 minutes, or `docker compose exec ghostsip /opt/ghostsip/venv/bin/python /opt/ghostsip/receiver/manage.py axes_reset` |
